@@ -29,6 +29,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import org.apache.drill.PlanTestBase;
 import org.apache.drill.common.exceptions.UserException;
 import org.apache.drill.common.exceptions.UserRemoteException;
 import org.apache.drill.common.expression.SchemaPath;
@@ -51,13 +52,14 @@ import org.apache.drill.exec.rpc.user.UserResultsListener;
 import org.apache.drill.exec.util.VectorUtil;
 import org.apache.drill.exec.vector.NullableVarCharVector;
 import org.apache.drill.exec.vector.ValueVector;
+import org.apache.drill.exec.vector.accessor.ScalarReader;
+import org.apache.drill.shaded.guava.com.google.common.base.Preconditions;
 import org.apache.drill.test.BufferingQueryEventListener.QueryEvent;
 import org.apache.drill.test.ClientFixture.StatementParser;
 import org.apache.drill.test.rowSet.DirectRowSet;
 import org.apache.drill.test.rowSet.RowSet;
 import org.apache.drill.test.rowSet.RowSetReader;
-
-import org.apache.drill.shaded.guava.com.google.common.base.Preconditions;
+import org.joda.time.Period;
 
 /**
  * Builder for a Drill query. Provides all types of query formats,
@@ -213,6 +215,23 @@ public class QueryBuilder {
     public QueryState finalState() { return finalState; }
   }
 
+  /**
+   * Scalar reader function interface for a set of reader methods
+   * @param <T> - reader returned type
+   */
+  private interface SingletonScalarReader<T> {
+    T read(ScalarReader reader);
+  }
+
+  /**
+   * VectorQueryReader function interface
+   * @param <V> - vector class
+   * @param <T> - result type
+   */
+  public interface VectorQueryReader<T, V> {
+    T read(int recordsCount, V vector);
+  }
+
   private final ClientFixture client;
   private QueryType queryType;
   private String queryText;
@@ -336,11 +355,17 @@ public class QueryBuilder {
   public DirectRowSet rowSet() throws RpcException {
 
     // Ignore all but the first non-empty batch.
+    // Always return the last batch, which may be empty.
 
-    QueryDataBatch dataBatch = null;
+    QueryDataBatch resultBatch = null;
     for (QueryDataBatch batch : results()) {
-      if (dataBatch == null  &&  batch.getHeader().getRowCount() != 0) {
-        dataBatch = batch;
+      if (resultBatch == null) {
+        resultBatch = batch;
+      } else if (resultBatch.getHeader().getRowCount() == 0) {
+        resultBatch.release();
+        resultBatch = batch;
+      } else if (batch.getHeader().getRowCount() > 0) {
+        throw new IllegalStateException("rowSet() returns a single batch, but this query returned multiple batches. Consider rowSetIterator() instead.");
       } else {
         batch.release();
       }
@@ -348,7 +373,7 @@ public class QueryBuilder {
 
     // No results?
 
-    if (dataBatch == null) {
+    if (resultBatch == null) {
       return null;
     }
 
@@ -356,18 +381,108 @@ public class QueryBuilder {
 
     final RecordBatchLoader loader = new RecordBatchLoader(client.allocator());
     try {
-      loader.load(dataBatch.getHeader().getDef(), dataBatch.getData());
-      dataBatch.release();
+      loader.load(resultBatch.getHeader().getDef(), resultBatch.getData());
+      resultBatch.release();
       VectorContainer container = loader.getContainer();
       container.setRecordCount(loader.getRecordCount());
+
+      // Null results? Drill will return a single batch with no rows
+      // and no columns even if the scan (or other) operator returns
+      // no batches at all. For ease of testing, simply map this null
+      // result set to a null output row set that says "nothing at all
+      // was returned." Note that this is different than an empty result
+      // set which has a schema, but no rows.
+
+      if (container.getRecordCount() == 0 && container.getNumberOfColumns() == 0) {
+        container.clear();
+        return null;
+      }
+
       return DirectRowSet.fromContainer(container);
     } catch (SchemaChangeException e) {
       throw new IllegalStateException(e);
     }
   }
 
-  public QueryRowSetIterator rowSetIterator( ) {
+  public QueryRowSetIterator rowSetIterator() {
     return new QueryRowSetIterator(client.allocator(), withEventListener());
+  }
+
+  /**
+   * Run the query which expect to return vector {@code V} representation
+   * of type {@code T} for the column {@code columnName}.
+   * <p>
+   * <pre>
+   * Example:
+   *
+   *  Set<String> results = queryBuilder()
+   *      .sql(query)
+   *      .vectorValue(
+   *        "columnName",
+   *        SomeVector.class,
+   *        (resultRecordCount, vector) -> {
+   *          Set<String> r = new HashSet<>();
+   *          for (int i = 0; i < resultRecordCount; i++) {
+   *            r.add(vector.getAccessor().getAsStringBuilder(i).toString());
+   *          }
+   *          return r;
+   *        }
+   *      );
+   * </pre>
+   * @param columnName name of the column to read
+   * @param vectorClass returned by the query vector class
+   * @param reader lambda to read the vector value representation
+   * @param <V> vector class
+   * @param <T> return type
+   * @return result produced by {@code reader} lambda or {@code null} if no records returned from the query
+   *
+   */
+  @SuppressWarnings("unchecked")
+  public <T, V> T vectorValue(String columnName, Class<V> vectorClass, VectorQueryReader<T, V> reader)
+      throws RpcException, SchemaChangeException {
+
+    List<QueryDataBatch> result = results();
+    RecordBatchLoader loader = new RecordBatchLoader(client.allocator());
+    QueryDataBatch queryDataBatch = null;
+
+    try {
+      queryDataBatch = result.get(0);
+      loader.load(queryDataBatch.getHeader().getDef(), queryDataBatch.getData());
+
+      V vector = (V) loader.getValueAccessorById(
+          vectorClass,
+          loader.getValueVectorId(SchemaPath.getCompoundPath(columnName)).getFieldIds())
+          .getValueVector();
+
+      return (loader.getRecordCount() > 0) ? reader.read(loader.getRecordCount(), vector) : null;
+    } finally {
+      if (queryDataBatch != null) {
+        queryDataBatch.release();
+      }
+      loader.clear();
+    }
+  }
+
+  /**
+   * Run the query that is expected to return (at least) one row
+   * with the only (or first) column returning a {@link T} value.
+   * The {@link T} value cannot be null.
+   *
+   * @return the value of the first column of the first row
+   * @throws RpcException if anything goes wrong
+   */
+  private <T> T singletonGeneric(SingletonScalarReader<T> scalarReader) throws RpcException {
+    RowSet rowSet = rowSet();
+    if (rowSet == null) {
+      throw new IllegalStateException("No rows returned");
+    }
+    try {
+      RowSetReader reader = rowSet.reader();
+      reader.next();
+      return scalarReader.read(reader.scalar(0));
+    } finally {
+      rowSet.clear();
+    }
   }
 
   /**
@@ -378,17 +493,8 @@ public class QueryBuilder {
    * @return the value of the first column of the first row
    * @throws RpcException if anything goes wrong
    */
-
   public long singletonLong() throws RpcException {
-    RowSet rowSet = rowSet();
-    if (rowSet == null) {
-      throw new IllegalStateException("No rows returned");
-    }
-    RowSetReader reader = rowSet.reader();
-    reader.next();
-    long value = reader.scalar(0).getLong();
-    rowSet.clear();
-    return value;
+    return singletonGeneric(ScalarReader::getLong);
   }
 
   /**
@@ -399,17 +505,8 @@ public class QueryBuilder {
    * @return the value of the first column of the first row
    * @throws RpcException if anything goes wrong
    */
-
   public double singletonDouble() throws RpcException {
-    RowSet rowSet = rowSet();
-    if (rowSet == null) {
-      throw new IllegalStateException("No rows returned");
-    }
-    RowSetReader reader = rowSet.reader();
-    reader.next();
-    double value = reader.scalar(0).getDouble();
-    rowSet.clear();
-    return value;
+    return singletonGeneric(ScalarReader::getDouble);
   }
 
   /**
@@ -420,17 +517,20 @@ public class QueryBuilder {
    * @return the value of the first column of the first row
    * @throws RpcException if anything goes wrong
    */
-
   public int singletonInt() throws RpcException {
-    RowSet rowSet = rowSet();
-    if (rowSet == null) {
-      throw new IllegalStateException("No rows returned");
-    }
-    RowSetReader reader = rowSet.reader();
-    reader.next();
-    int value = reader.scalar(0).getInt();
-    rowSet.clear();
-    return value;
+    return singletonGeneric(ScalarReader::getInt);
+  }
+
+  /**
+   * Run the query that is expected to return (at least) one row
+   * with the only (or first) column returning a {@link Period} value.
+   * The {@link Period} value cannot be null.
+   *
+   * @return the value of the first column of the first row
+   * @throws RpcException if anything goes wrong
+   */
+  public Period singletonPeriod() throws RpcException {
+    return singletonGeneric(ScalarReader::getPeriod);
   }
 
   /**
@@ -443,20 +543,7 @@ public class QueryBuilder {
    */
 
   public String singletonString() throws RpcException {
-    RowSet rowSet = rowSet();
-    if (rowSet == null) {
-      throw new IllegalStateException("No rows returned");
-    }
-    RowSetReader reader = rowSet.reader();
-    reader.next();
-    String value;
-    if (reader.scalar(0).isNull()) {
-      value = null;
-    } else {
-      value = reader.scalar(0).getString();
-    }
-    rowSet.clear();
-    return value;
+    return singletonGeneric(ScalarReader::getString);
   }
 
   /**
@@ -643,7 +730,7 @@ public class QueryBuilder {
    */
 
   protected String queryPlan(String columnName) throws Exception {
-    Preconditions.checkArgument(queryType == QueryType.SQL, "Can only explan an SQL query.");
+    Preconditions.checkArgument(queryType == QueryType.SQL, "Can only explain an SQL query.");
     final List<QueryDataBatch> results = results();
     final RecordBatchLoader loader = new RecordBatchLoader(client.allocator());
     final StringBuilder builder = new StringBuilder();
@@ -664,7 +751,6 @@ public class QueryBuilder {
         throw new IllegalStateException("Looks like you did not provide an explain plan query, please add EXPLAIN PLAN FOR to the beginning of your query.");
       }
 
-      @SuppressWarnings("resource")
       final ValueVector vv = vw.getValueVector();
       for (int i = 0; i < vv.getAccessor().getValueCount(); i++) {
         final Object o = vv.getAccessor().getObject(i);

@@ -50,26 +50,20 @@ public class ValueHolderReplacementVisitor extends ClassVisitor {
   @Override
   public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
     MethodVisitor innerVisitor = super.visitMethod(access, name, desc, signature, exceptions);
-//     innerVisitor = new Debugger(access, name, desc, signature, exceptions, innerVisitor);
+//    innerVisitor = new Debugger(access, name, desc, signature, exceptions, innerVisitor);
     if (verifyBytecode) {
       innerVisitor = new CheckMethodVisitorFsm(api, innerVisitor);
     }
 
-    /*
-     * Before using the ScalarReplacementNode to rewrite method code, use the
-     * AloadPopRemover to eliminate unnecessary ALOAD-POP pairs; see the
-     * AloadPopRemover javadoc for a detailed explanation.
-     */
-    return new AloadPopRemover(api,
-        new ScalarReplacementNode(
-            className, access, name, desc, signature, exceptions, innerVisitor, verifyBytecode));
+    return new ScalarReplacementNode(className, access, name, desc, signature,
+        exceptions, innerVisitor, verifyBytecode);
   }
 
   private static class Debugger extends MethodNode {
     MethodVisitor inner;
 
     public Debugger(int access, String name, String desc, String signature, String[] exceptions, MethodVisitor inner) {
-      super(access, name, desc, signature, exceptions);
+      super(CompilationConfig.ASM_API_VERSION, access, name, desc, signature, exceptions);
       this.inner = inner;
     }
 

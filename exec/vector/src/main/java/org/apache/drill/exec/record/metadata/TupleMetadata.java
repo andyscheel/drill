@@ -17,8 +17,15 @@
  */
 package org.apache.drill.exec.record.metadata;
 
+import java.io.IOException;
 import java.util.List;
 
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectReader;
+import com.fasterxml.jackson.databind.ObjectWriter;
 import org.apache.drill.exec.record.MaterializedField;
 
 /**
@@ -43,13 +50,21 @@ import org.apache.drill.exec.record.MaterializedField;
  * In the future, this structure will also gather metadata useful
  * for vector processing such as expected widths and so on.
  */
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type", defaultImpl = TupleSchema.class)
+@JsonSubTypes({
+  @JsonSubTypes.Type(value = TupleSchema.class, name = TupleSchema.TYPE)
+})
+public interface TupleMetadata extends Propertied, Iterable<ColumnMetadata> {
 
-public interface TupleMetadata extends Iterable<ColumnMetadata> {
+  ObjectWriter WRITER = new ObjectMapper().writerFor(TupleMetadata.class);
+  ObjectReader READER = new ObjectMapper().readerFor(TupleMetadata.class);
+
+  String IS_STRICT_SCHEMA_PROP = DRILL_PROP_PREFIX + "strict";
 
   /**
    * Add a new column to the schema.
    *
-   * @param columnSchema
+   * @param field materialized field
    * @return the index of the new column
    */
   ColumnMetadata add(MaterializedField field);
@@ -73,8 +88,15 @@ public interface TupleMetadata extends Iterable<ColumnMetadata> {
    * @return a list of the top-level fields. Maps contain their child
    * fields
    */
-
   List<MaterializedField> toFieldList();
+
+  /**
+   * Returns schema as list of <tt>ColumnMetadata</tt> objects
+   * which can be used to create JSON schema object.
+   *
+   * @return a list of metadata for each column
+   */
+  List<ColumnMetadata> toMetadataList();
 
   /**
    * Full name of the column. Note: this name cannot be used to look up
@@ -87,4 +109,39 @@ public interface TupleMetadata extends Iterable<ColumnMetadata> {
 
   String fullName(ColumnMetadata column);
   String fullName(int index);
+  TupleMetadata copy();
+
+  /**
+   * Converts current {@link TupleMetadata} implementation into JSON string representation.
+   *
+   * @return tuple metadata in JSON string representation
+   * @throws IllegalStateException if unable to convert current instance into JSON string
+   */
+  default String jsonString() {
+    try {
+      return WRITER.writeValueAsString(this);
+    } catch (JsonProcessingException e) {
+      throw new IllegalStateException("Unable to convert tuple metadata into JSON string: " + toString(), e);
+    }
+  }
+
+  /**
+   * Converts given JSON string into {@link TupleMetadata} instance.
+   * {@link TupleMetadata} implementation is determined by present type property. For example: "type":"tuple_schema".
+   * If given JSON string is untyped, used default implementation: {@link TupleSchema}.
+   *
+   * @param jsonString tuple metadata in JSON string representation
+   * @return {@link TupleMetadata} instance, null if given JSON string is null or empty
+   * @throws IllegalArgumentException if unable to deserialize given JSON string
+   */
+  static TupleMetadata of(String jsonString) {
+    if (jsonString == null || jsonString.trim().isEmpty()) {
+      return null;
+    }
+    try {
+      return READER.readValue(jsonString);
+    } catch (IOException e) {
+      throw new IllegalArgumentException("Unable to deserialize given JSON string into tuple metadata: " + jsonString, e);
+    }
+  }
 }

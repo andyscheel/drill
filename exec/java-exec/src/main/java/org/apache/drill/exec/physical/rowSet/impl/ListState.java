@@ -23,23 +23,23 @@ import java.util.Map;
 
 import org.apache.drill.common.types.TypeProtos.MinorType;
 import org.apache.drill.exec.physical.rowSet.ResultVectorCache;
-import org.apache.drill.exec.physical.rowSet.impl.SingleVectorState.FixedWidthVectorState;
+import org.apache.drill.exec.physical.rowSet.impl.SingleVectorState.IsSetVectorState;
 import org.apache.drill.exec.physical.rowSet.impl.SingleVectorState.OffsetVectorState;
 import org.apache.drill.exec.physical.rowSet.impl.UnionState.UnionVectorState;
-import org.apache.drill.exec.physical.rowSet.project.RequestedTuple;
 import org.apache.drill.exec.record.metadata.ColumnMetadata;
 import org.apache.drill.exec.record.metadata.VariantMetadata;
 import org.apache.drill.exec.record.metadata.VariantSchema;
 import org.apache.drill.exec.vector.accessor.ObjectWriter;
 import org.apache.drill.exec.vector.accessor.VariantWriter;
-import org.apache.drill.exec.vector.accessor.WriterPosition;
 import org.apache.drill.exec.vector.accessor.impl.HierarchicalFormatter;
 import org.apache.drill.exec.vector.accessor.writer.ListWriterImpl;
 import org.apache.drill.exec.vector.accessor.writer.SimpleListShim;
 import org.apache.drill.exec.vector.accessor.writer.UnionVectorShim;
 import org.apache.drill.exec.vector.accessor.writer.UnionWriterImpl;
+import org.apache.drill.exec.vector.accessor.writer.WriterEvents;
 import org.apache.drill.exec.vector.complex.ListVector;
 import org.apache.drill.exec.vector.complex.UnionVector;
+import org.apache.drill.exec.vector.complex.impl.UnionWriter;
 
 /**
  * Represents the contents of a list vector. A list vector is an odd creature.
@@ -111,22 +111,22 @@ public class ListState extends ContainerState
 
     private final ColumnMetadata schema;
     private final ListVector vector;
-    private final FixedWidthVectorState bitsVectorState;
-    private final OffsetVectorState offsetVectorState;
+    private final VectorState bitsVectorState;
+    private final VectorState offsetVectorState;
     private VectorState memberVectorState;
 
     public ListVectorState(UnionWriterImpl writer, ListVector vector) {
       this.schema = writer.schema();
       this.vector = vector;
-      bitsVectorState = new FixedWidthVectorState(writer, vector.getBitsVector());
+      bitsVectorState = new IsSetVectorState(writer, vector.getBitsVector());
       offsetVectorState = new OffsetVectorState(writer, vector.getOffsetVector(), writer.elementPosition());
       memberVectorState = new NullVectorState();
     }
 
-    public ListVectorState(ListWriterImpl writer, WriterPosition elementWriter, ListVector vector) {
+    public ListVectorState(ListWriterImpl writer, WriterEvents elementWriter, ListVector vector) {
       this.schema = writer.schema();
       this.vector = vector;
-      bitsVectorState = new FixedWidthVectorState(writer, vector.getBitsVector());
+      bitsVectorState = new IsSetVectorState(writer, vector.getBitsVector());
       offsetVectorState = new OffsetVectorState(writer, vector.getOffsetVector(), elementWriter);
       memberVectorState = new NullVectorState();
     }
@@ -202,9 +202,8 @@ public class ListState extends ContainerState
 
   private final Map<MinorType, ColumnState> columns = new HashMap<>();
 
-  public ListState(LoaderInternals loader, ResultVectorCache vectorCache,
-      RequestedTuple projectionSet) {
-    super(loader, vectorCache, projectionSet);
+  public ListState(LoaderInternals loader, ResultVectorCache vectorCache) {
+    super(loader, vectorCache);
   }
 
   public VariantMetadata variantSchema() {

@@ -27,12 +27,15 @@ import static org.junit.Assert.assertTrue;
 import static org.apache.drill.test.rowSet.RowSetUtilities.objArray;
 import static org.apache.drill.test.rowSet.RowSetUtilities.singleObjArray;
 
+import org.apache.drill.categories.RowSetTests;
 import org.apache.drill.common.types.TypeProtos.DataMode;
 import org.apache.drill.common.types.TypeProtos.MinorType;
 import org.apache.drill.exec.record.BatchSchema;
 import org.apache.drill.exec.record.MaterializedField;
 import org.apache.drill.exec.record.VectorContainer;
+import org.apache.drill.exec.record.BatchSchemaBuilder;
 import org.apache.drill.exec.record.metadata.ColumnMetadata;
+import org.apache.drill.exec.record.metadata.SchemaBuilder;
 import org.apache.drill.exec.record.metadata.TupleMetadata;
 import org.apache.drill.exec.vector.RepeatedVarCharVector;
 import org.apache.drill.exec.vector.ValueVector;
@@ -51,11 +54,11 @@ import org.apache.drill.test.rowSet.DirectRowSet;
 import org.apache.drill.test.rowSet.RowSet;
 import org.apache.drill.test.rowSet.RowSetComparison;
 import org.apache.drill.test.rowSet.RowSet.SingleRowSet;
-import org.apache.drill.test.rowSet.schema.SchemaBuilder;
 import org.apache.drill.test.rowSet.RowSetReader;
 import org.apache.drill.test.rowSet.RowSetUtilities;
 import org.apache.drill.test.rowSet.RowSetWriter;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
 /**
  * Test the basics of repeated list support in the schema builder,
@@ -64,6 +67,7 @@ import org.junit.Test;
  * on to the result set loader tests.
  */
 
+@Category(RowSetTests.class)
 public class TestRepeatedListAccessors extends SubOperatorTest {
 
   /**
@@ -73,10 +77,12 @@ public class TestRepeatedListAccessors extends SubOperatorTest {
 
   @Test
   public void testSchemaIncompleteBatch() {
-    final BatchSchema schema = new SchemaBuilder()
+    SchemaBuilder schemaBuilder = new SchemaBuilder()
         .add("id", MinorType.INT)
-        .addRepeatedList("list2")
-          .resumeSchema()
+          .addRepeatedList("list2")
+          .resumeSchema();
+    BatchSchema schema = new BatchSchemaBuilder()
+        .withSchemaBuilder(schemaBuilder)
         .build();
 
     assertEquals(2, schema.getFieldCount());
@@ -110,11 +116,13 @@ public class TestRepeatedListAccessors extends SubOperatorTest {
 
   @Test
   public void testSchema2DBatch() {
-    final BatchSchema schema = new SchemaBuilder()
+    SchemaBuilder schemaBuilder = new SchemaBuilder()
         .add("id", MinorType.INT)
         .addRepeatedList("list2")
           .addArray(MinorType.VARCHAR)
-          .resumeSchema()
+          .resumeSchema();
+    BatchSchema schema = new BatchSchemaBuilder()
+        .withSchemaBuilder(schemaBuilder)
         .build();
 
     assertEquals(2, schema.getFieldCount());
@@ -169,13 +177,15 @@ public class TestRepeatedListAccessors extends SubOperatorTest {
 
   @Test
   public void testSchema3DBatch() {
-    final BatchSchema schema = new SchemaBuilder()
+    SchemaBuilder schemaBuilder = new SchemaBuilder()
         .add("id", MinorType.INT)
         .addRepeatedList("list2")
           .addDimension()
             .addArray(MinorType.VARCHAR)
             .resumeList()
-          .resumeSchema()
+            .resumeSchema();
+    BatchSchema schema = new BatchSchemaBuilder()
+        .withSchemaBuilder(schemaBuilder)
         .build();
 
     assertEquals(2, schema.getFieldCount());

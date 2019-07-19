@@ -20,6 +20,7 @@ package org.apache.drill.exec.store.mapr.db.json;
 import org.apache.drill.common.expression.BooleanOperator;
 import org.apache.drill.common.expression.FunctionCall;
 import org.apache.drill.common.expression.LogicalExpression;
+import org.apache.drill.common.expression.SchemaPath;
 import org.apache.drill.common.expression.visitors.AbstractExprVisitor;
 import org.apache.drill.exec.store.hbase.DrillHBaseConstants;
 import org.ojai.Value;
@@ -27,7 +28,6 @@ import org.ojai.store.QueryCondition;
 import org.ojai.store.QueryCondition.Op;
 
 import org.apache.drill.shaded.guava.com.google.common.collect.ImmutableList;
-import com.mapr.db.MapRDB;
 import com.mapr.db.impl.MapRDBImpl;
 
 public class JsonConditionBuilder extends AbstractExprVisitor<JsonScanSpec, Void, RuntimeException> implements DrillHBaseConstants {
@@ -58,6 +58,15 @@ public class JsonConditionBuilder extends AbstractExprVisitor<JsonScanSpec, Void
   }
 
   @Override
+  public JsonScanSpec visitSchemaPath(SchemaPath path, Void value) throws RuntimeException {
+    String fieldPath = FieldPathHelper.schemaPath2FieldPath(path).asPathString();
+    QueryCondition cond = MapRDBImpl.newCondition().is(fieldPath, Op.EQUAL, true);
+    return new JsonScanSpec(groupScan.getTableName(),
+        groupScan.getIndexDesc(),
+        cond.build());
+  }
+
+  @Override
   public JsonScanSpec visitUnknown(LogicalExpression e, Void value) throws RuntimeException {
     allExpressionsConverted = false;
     return null;
@@ -75,7 +84,12 @@ public class JsonConditionBuilder extends AbstractExprVisitor<JsonScanSpec, Void
     ImmutableList<LogicalExpression> args = call.args;
 
     if (CompareFunctionsProcessor.isCompareFunction(functionName)) {
-      CompareFunctionsProcessor processor = CompareFunctionsProcessor.process(call);
+      CompareFunctionsProcessor processor;
+      if (groupScan.getFormatPlugin().getConfig().isReadTimestampWithZoneOffset()) {
+        processor = CompareFunctionsProcessor.processWithTimeZoneOffset(call);
+      } else {
+        processor = CompareFunctionsProcessor.process(call);
+      }
       if (processor.isSuccess()) {
         nodeScanSpec = createJsonScanSpec(call, processor);
       }
@@ -208,11 +222,15 @@ public class JsonConditionBuilder extends AbstractExprVisitor<JsonScanSpec, Void
       break;
 
     case "isnull":
-      cond = MapRDBImpl.newCondition().notExists(fieldPath);
+      // 'field is null' should be transformed to 'field not exists OR typeof(field) = NULL'
+      QueryCondition orCond = MapRDBImpl.newCondition().or();
+      cond = orCond.notExists(fieldPath).typeOf(fieldPath, Value.Type.NULL).close();
       break;
 
     case "isnotnull":
-      cond = MapRDBImpl.newCondition().exists(fieldPath);
+      // 'field is not null should be transformed to 'field exists AND typeof(field) != NULL'
+      QueryCondition andCond = MapRDBImpl.newCondition().and();
+      cond = andCond.exists(fieldPath).notTypeOf(fieldPath, Value.Type.NULL).close();
       break;
 
     case "istrue":

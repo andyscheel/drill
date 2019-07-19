@@ -17,9 +17,11 @@
  */
 package org.apache.drill.exec.physical.rowSet;
 
+import org.apache.drill.common.exceptions.CustomErrorContext;
 import org.apache.drill.exec.record.VectorContainer;
 import org.apache.drill.exec.record.metadata.TupleMetadata;
 import org.apache.drill.exec.vector.BaseValueVector;
+import org.apache.drill.exec.vector.complex.impl.VectorContainerWriter;
 
 /**
  * Builds a result set (series of zero or more row sets) based on a defined
@@ -40,6 +42,12 @@ import org.apache.drill.exec.vector.BaseValueVector;
 public interface ResultSetLoader {
 
   public static final int DEFAULT_ROW_COUNT = BaseValueVector.INITIAL_VALUE_ALLOCATION;
+
+  /**
+   * Context for error messages.
+   */
+
+  CustomErrorContext context();
 
   /**
    * Current schema version. The version increments by one each time
@@ -95,6 +103,17 @@ public interface ResultSetLoader {
    */
 
   int totalRowCount();
+
+  /**
+   * Report whether the loader currently holds rows. If within a batch,
+   * reports if at least one row has been read (which might be a look-ahead
+   * row.) If between batches, reports if a look-ahead row is available.
+   *
+   * @return true if at least one row is available to harvest, false
+   * otherwise
+   */
+
+  boolean hasRows();
 
   /**
    * Start a new row batch. Valid only when first started, or after the

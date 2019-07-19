@@ -20,10 +20,10 @@ package org.apache.drill.exec.physical.rowSet.impl;
 import java.util.ArrayList;
 import java.util.Collection;
 
+import org.apache.drill.exec.physical.impl.scan.project.projSet.ProjectionSetFactory;
 import org.apache.drill.exec.physical.rowSet.ResultVectorCache;
 import org.apache.drill.exec.physical.rowSet.impl.ColumnState.BaseContainerColumnState;
 import org.apache.drill.exec.physical.rowSet.impl.SingleVectorState.OffsetVectorState;
-import org.apache.drill.exec.physical.rowSet.project.ImpliedTupleRequest;
 import org.apache.drill.exec.record.MaterializedField;
 import org.apache.drill.exec.record.metadata.ColumnMetadata;
 import org.apache.drill.exec.record.metadata.MetadataUtils;
@@ -33,7 +33,6 @@ import org.apache.drill.exec.vector.accessor.impl.HierarchicalFormatter;
 import org.apache.drill.exec.vector.accessor.writer.AbstractObjectWriter;
 import org.apache.drill.exec.vector.accessor.writer.RepeatedListWriter;
 import org.apache.drill.exec.vector.complex.RepeatedListVector;
-
 import org.apache.drill.shaded.guava.com.google.common.collect.Lists;
 
 /**
@@ -87,12 +86,12 @@ public class RepeatedListState extends ContainerState implements RepeatedListWri
     private final RepeatedListVector vector;
     private final OffsetVectorState offsetsState;
 
-    public RepeatedListVectorState(ArrayWriter arrayWriter, RepeatedListVector vector) {
+    public RepeatedListVectorState(AbstractObjectWriter arrayWriter, RepeatedListVector vector) {
       this.vector = vector;
-      this.arrayWriter = arrayWriter;
+      this.arrayWriter = arrayWriter.array();
       offsetsState = new OffsetVectorState(
-          arrayWriter, vector.getOffsetVector(),
-          arrayWriter.entryType() == null ? null : arrayWriter.array());
+          arrayWriter.events(), vector.getOffsetVector(),
+          this.arrayWriter.entryType() == null ? null : arrayWriter.events());
     }
 
     /**
@@ -105,7 +104,7 @@ public class RepeatedListState extends ContainerState implements RepeatedListWri
      */
 
     public void updateChildWriter(AbstractObjectWriter childWriter) {
-      offsetsState.setChildWriter(childWriter.array());
+      offsetsState.setChildWriter(childWriter.events());
     }
 
     @SuppressWarnings("unchecked")
@@ -158,7 +157,7 @@ public class RepeatedListState extends ContainerState implements RepeatedListWri
 
   public RepeatedListState(LoaderInternals loader,
       ResultVectorCache vectorCache) {
-    super(loader, vectorCache, ImpliedTupleRequest.ALL_MEMBERS);
+    super(loader, vectorCache, ProjectionSetFactory.projectAll());
   }
 
   @Override

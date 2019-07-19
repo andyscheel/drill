@@ -23,6 +23,7 @@ import static org.junit.Assert.fail;
 
 import java.util.Arrays;
 
+import org.apache.drill.categories.RowSetTests;
 import org.apache.drill.common.exceptions.UserException;
 import org.apache.drill.common.types.TypeProtos.DataMode;
 import org.apache.drill.common.types.TypeProtos.MinorType;
@@ -30,23 +31,24 @@ import org.apache.drill.exec.physical.rowSet.ResultSetLoader;
 import org.apache.drill.exec.physical.rowSet.RowSetLoader;
 import org.apache.drill.exec.physical.rowSet.impl.ResultSetLoaderImpl.ResultSetOptions;
 import org.apache.drill.exec.record.MaterializedField;
+import org.apache.drill.exec.record.metadata.SchemaBuilder;
 import org.apache.drill.exec.record.metadata.TupleMetadata;
 import org.apache.drill.exec.vector.ValueVector;
 import org.apache.drill.exec.vector.accessor.ArrayReader;
 import org.apache.drill.exec.vector.accessor.ScalarReader;
 import org.apache.drill.exec.vector.accessor.ScalarWriter;
+import org.apache.drill.shaded.guava.com.google.common.base.Charsets;
 import org.apache.drill.test.SubOperatorTest;
 import org.apache.drill.test.rowSet.RowSet;
 import org.apache.drill.test.rowSet.RowSetReader;
-import org.apache.drill.test.rowSet.schema.SchemaBuilder;
 import org.junit.Test;
-
-import org.apache.drill.shaded.guava.com.google.common.base.Charsets;
+import org.junit.experimental.categories.Category;
 
 /**
  * Exercise the vector overflow functionality for the result set loader.
  */
 
+@Category(RowSetTests.class)
 public class TestResultSetLoaderOverflow extends SubOperatorTest {
 
   /**
@@ -700,6 +702,80 @@ public class TestResultSetLoaderOverflow extends SubOperatorTest {
     assertTrue(reader.scalar(1).isNull());
     assertTrue(Arrays.equals(value, reader.scalar(2).getBytes()));
     assertTrue(reader.scalar(3).isNull());
+    result.clear();
+
+    rsLoader.close();
+  }
+
+  @Test
+  public void testVectorSizeLimitWithAppend() {
+    TupleMetadata schema = new SchemaBuilder()
+        .add("s", MinorType.VARCHAR)
+        .buildSchema();
+    ResultSetOptions options = new OptionBuilder()
+        .setRowCountLimit(ValueVector.MAX_ROW_COUNT)
+        .setSchema(schema)
+        .build();
+    ResultSetLoader rsLoader = new ResultSetLoaderImpl(fixture.allocator(), options);
+    RowSetLoader rootWriter = rsLoader.writer();
+
+    rsLoader.startBatch();
+    byte head[] = "abc".getBytes();
+    byte tail[] = new byte[523];
+    Arrays.fill(tail, (byte) 'X');
+    int count = 0;
+    ScalarWriter colWriter = rootWriter.scalar(0);
+    while (! rootWriter.isFull()) {
+      rootWriter.start();
+      colWriter.setBytes(head, head.length);
+      colWriter.appendBytes(tail, tail.length);
+      colWriter.appendBytes(tail, tail.length);
+      rootWriter.save();
+      count++;
+    }
+
+    // Number of rows should be driven by vector size.
+    // Our row count should include the overflow row
+
+    int valueLength = head.length + 2 * tail.length;
+    int expectedCount = ValueVector.MAX_BUFFER_SIZE / valueLength;
+    assertEquals(expectedCount + 1, count);
+
+    // Loader's row count should include only "visible" rows
+
+    assertEquals(expectedCount, rootWriter.rowCount());
+
+    // Total count should include invisible and look-ahead rows.
+
+    assertEquals(expectedCount + 1, rsLoader.totalRowCount());
+
+    // Result should exclude the overflow row
+
+    RowSet result = fixture.wrap(rsLoader.harvest());
+    assertEquals(expectedCount, result.rowCount());
+
+    // Verify that the values were, in fact, appended.
+
+    String expected = new String(head, Charsets.UTF_8);
+    expected += new String(tail, Charsets.UTF_8);
+    expected += new String(tail, Charsets.UTF_8);
+    RowSetReader reader = result.reader();
+    while (reader.next()) {
+      assertEquals(expected, reader.scalar(0).getString());
+    }
+    result.clear();
+
+    // Next batch should start with the overflow row
+
+    rsLoader.startBatch();
+    assertEquals(1, rootWriter.rowCount());
+    assertEquals(expectedCount + 1, rsLoader.totalRowCount());
+    result = fixture.wrap(rsLoader.harvest());
+    assertEquals(1, result.rowCount());
+    reader = result.reader();
+    while (reader.next()) {
+      assertEquals(expected, reader.scalar(0).getString());
+    }
     result.clear();
 
     rsLoader.close();

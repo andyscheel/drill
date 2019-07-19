@@ -49,6 +49,7 @@ import org.apache.calcite.rel.rules.UnionToDistinctRule;
 import org.apache.drill.exec.planner.logical.DrillConditions;
 import org.apache.drill.exec.planner.logical.DrillRelFactories;
 import org.apache.drill.shaded.guava.com.google.common.base.Preconditions;
+
 /**
  * Contains rule instances which use custom RelBuilder.
  */

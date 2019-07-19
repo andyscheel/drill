@@ -19,6 +19,7 @@ package org.apache.drill.exec.compile.bytecode;
 
 import java.util.List;
 
+import org.apache.drill.exec.compile.CompilationConfig;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.AbstractInsnNode;
@@ -40,6 +41,7 @@ public class ReplacingInterpreter extends BasicInterpreter {
   private final List<ReplacingBasicValue> valueList;
 
   public ReplacingInterpreter(final String className, final List<ReplacingBasicValue> valueList) {
+    super(CompilationConfig.ASM_API_VERSION);
     this.className = className;
     this.valueList = valueList;
   }
@@ -78,6 +80,13 @@ public class ReplacingInterpreter extends BasicInterpreter {
     }
 
     return super.newOperation(insn);
+  }
+
+  @Override
+  public void returnOperation(AbstractInsnNode insn, BasicValue value, BasicValue expected) {
+    if (value instanceof ReplacingBasicValue) {
+      ((ReplacingBasicValue) value).markFunctionReturn();
+    }
   }
 
   @Override

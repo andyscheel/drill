@@ -23,7 +23,7 @@
   <parent>
     <artifactId>exec-parent</artifactId>
     <groupId>org.apache.drill.exec</groupId>
-    <version>1.15.0-SNAPSHOT</version>
+    <version>1.17.0-SNAPSHOT</version>
   </parent>
   <artifactId>drill-java-exec</artifactId>
   <name>exec/Java Execution Engine</name>
@@ -64,16 +64,15 @@
       <version>${kerby.version}</version>
       <scope>test</scope>
     </dependency>
-    <!-- <dependency> -->
-    <!-- <groupId>org.ow2.asm</groupId> -->
-    <!-- <artifactId>asm-util</artifactId> -->
-    <!-- <version>5.0.3</version> -->
-    <!-- </dependency> -->
     <dependency>
       <groupId>org.ow2.asm</groupId>
-      <artifactId>asm-debug-all</artifactId>
-      <version>5.0.3</version>
-      <!-- <scope>test</scope> -->
+      <artifactId>asm-commons</artifactId>
+      <version>${asm.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.ow2.asm</groupId>
+      <artifactId>asm-util</artifactId>
+      <version>${asm.version}</version>
     </dependency>
     <dependency>
       <groupId>org.apache.drill.contrib.data</groupId>
@@ -81,11 +80,6 @@
       <version>${project.version}</version>
       <scope>test</scope>
     </dependency>
-    <!-- <dependency> -->
-    <!-- <groupId>org.ow2.asm</groupId> -->
-    <!-- <artifactId>asm-commons</artifactId> -->
-    <!-- <version>5.0.3</version> -->
-    <!-- </dependency> -->
     <dependency>
       <groupId>org.apache.commons</groupId>
       <artifactId>commons-pool2</artifactId>
@@ -127,22 +121,19 @@
     <dependency>
       <groupId>com.sun.codemodel</groupId>
       <artifactId>codemodel</artifactId>
-      <version>2.6</version>
+      <version>${codemodel.version}</version>
     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-server</artifactId>
-      <version>9.1.5.v20140505</version>
     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-servlet</artifactId>
-      <version>9.1.5.v20140505</version>
     </dependency>
     <dependency>
       <groupId>org.eclipse.jetty</groupId>
       <artifactId>jetty-servlets</artifactId>
-      <version>9.1.5.v20140505</version>
       <exclusions>
         <exclusion>
           <artifactId>jetty-continuation</artifactId>
@@ -177,17 +168,14 @@
     <dependency>
       <groupId>org.glassfish.jersey.containers</groupId>
       <artifactId>jersey-container-jetty-servlet</artifactId>
-      <version>2.8</version>
     </dependency>
     <dependency>
       <groupId>org.glassfish.jersey.media</groupId>
       <artifactId>jersey-media-multipart</artifactId>
-      <version>2.8</version>
     </dependency>
     <dependency>
       <groupId>org.glassfish.jersey.media</groupId>
       <artifactId>jersey-media-json-jackson</artifactId>
-      <version>2.8</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.jaxrs</groupId>
@@ -211,7 +199,6 @@
     <dependency>
       <groupId>org.glassfish.jersey.ext</groupId>
       <artifactId>jersey-mvc-freemarker</artifactId>
-      <version>2.8</version>
       <exclusions>
           <exclusion>
             <artifactId>servlet-api</artifactId>
@@ -220,7 +207,7 @@
       </exclusions>
     </dependency>
     <dependency>
-      <groupId>org.apache.calcite</groupId>
+      <groupId>${calcite.groupId}</groupId>
       <artifactId>calcite-core</artifactId>
     </dependency>
     <dependency>
@@ -299,11 +286,11 @@
       <artifactId>vector</artifactId>
       <version>${project.version}</version>
     </dependency>
-    <!-- <dependency> -->
-    <!-- <groupId>org.apache.drill.exec</groupId> -->
-    <!-- <version>${project.version}</version> -->
-    <!-- <artifactId>drill-buffers</artifactId> -->
-    <!-- </dependency> -->
+    <dependency>
+      <groupId>org.apache.drill.metastore</groupId>
+      <artifactId>drill-metastore-api</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <dependency>
       <groupId>com.beust</groupId>
       <artifactId>jcommander</artifactId>
@@ -337,7 +324,6 @@
     <dependency>
       <groupId>com.google.protobuf</groupId>
       <artifactId>protobuf-java</artifactId>
-      <version>2.5.0</version>
     </dependency>
     <dependency>
       <groupId>org.mortbay.jetty</groupId>
@@ -358,6 +344,16 @@
       <artifactId>commons-compiler</artifactId>
     </dependency>
     <dependency>
+      <groupId>com.clearspring.analytics</groupId>
+      <artifactId>stream</artifactId>
+      <version>2.7.0</version>
+    </dependency>
+    <dependency>
+      <groupId>com.tdunning</groupId>
+      <artifactId>t-digest</artifactId>
+      <version>3.2</version>
+    </dependency>
+    <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-common</artifactId>
       <exclusions>
@@ -366,12 +362,12 @@
           <artifactId>commons-codec</artifactId>
         </exclusion>
         <exclusion>
-            <groupId>io.netty</groupId>
-            <artifactId>netty</artifactId>
+          <groupId>io.netty</groupId>
+          <artifactId>netty</artifactId>
         </exclusion>
         <exclusion>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-all</artifactId>
+          <groupId>io.netty</groupId>
+          <artifactId>netty-all</artifactId>
         </exclusion>
       </exclusions>
     </dependency>
@@ -465,7 +461,7 @@
     <dependency>
       <groupId>nl.basjes.parse.httpdlog</groupId>
       <artifactId>httpdlog-parser</artifactId>
-      <version>2.4</version>
+      <version>5.2</version>
       <exclusions>
         <exclusion>
           <groupId>commons-codec</groupId>
@@ -677,7 +673,7 @@
             <configuration>
               <artifactItems>
                 <artifactItem>
-                  <groupId>org.apache.calcite</groupId>
+                  <groupId>${calcite.groupId}</groupId>
                   <artifactId>calcite-core</artifactId>
                   <type>jar</type>
                   <overWrite>true</overWrite>
@@ -758,7 +754,6 @@
       <plugin> <!-- source file must end up in the jar for janino parsing -->
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>build-helper-maven-plugin</artifactId>
-        <version>1.9.1</version>
         <executions>
           <execution>
             <id>add-sources-as-resources</id>

@@ -36,8 +36,9 @@ import org.apache.drill.exec.physical.impl.spill.SpillSet;
 import org.apache.drill.exec.physical.impl.xsort.managed.SortImpl.SortResults;
 import org.apache.drill.exec.proto.ExecProtos.FragmentHandle;
 import org.apache.drill.exec.proto.UserBitShared.QueryId;
-import org.apache.drill.exec.record.BatchSchema;
 import org.apache.drill.exec.record.VectorContainer;
+import org.apache.drill.exec.record.metadata.SchemaBuilder;
+import org.apache.drill.exec.record.metadata.TupleMetadata;
 import org.apache.drill.exec.vector.ValueVector;
 import org.apache.drill.test.BaseDirTestWatcher;
 import org.apache.drill.test.DrillTest;
@@ -47,7 +48,6 @@ import org.apache.drill.test.rowSet.HyperRowSetImpl;
 import org.apache.drill.test.rowSet.IndirectRowSet;
 import org.apache.drill.test.rowSet.RowSet;
 import org.apache.drill.test.rowSet.RowSet.ExtendableRowSet;
-import org.apache.drill.test.rowSet.schema.SchemaBuilder;
 import org.apache.drill.test.rowSet.RowSetBuilder;
 import org.apache.drill.test.rowSet.RowSetComparison;
 import org.apache.drill.test.rowSet.RowSetReader;
@@ -228,7 +228,7 @@ public class TestSortImpl extends DrillTest {
   @Test
   public void testEmptyInput() throws Exception {
     try (OperatorFixture fixture = OperatorFixture.standardFixture(dirTestWatcher)) {
-      BatchSchema schema = SortTestUtilities.nonNullSchema();
+      TupleMetadata schema = SortTestUtilities.nonNullSchema();
       SortTestFixture sortTest = new SortTestFixture(fixture);
       sortTest.addInput(fixture.rowSetBuilder(schema)
           .build());
@@ -244,7 +244,7 @@ public class TestSortImpl extends DrillTest {
   @Test
   public void testSingleRow() throws Exception {
     try (OperatorFixture fixture = OperatorFixture.standardFixture(dirTestWatcher)) {
-      BatchSchema schema = SortTestUtilities.nonNullSchema();
+      TupleMetadata schema = SortTestUtilities.nonNullSchema();
       SortTestFixture sortTest = new SortTestFixture(fixture);
       sortTest.addInput(fixture.rowSetBuilder(schema)
           .addRow(1, "first")
@@ -264,7 +264,7 @@ public class TestSortImpl extends DrillTest {
   @Test
   public void testSingleBatch() throws Exception {
     try (OperatorFixture fixture = OperatorFixture.standardFixture(dirTestWatcher)) {
-      BatchSchema schema = SortTestUtilities.nonNullSchema();
+      TupleMetadata schema = SortTestUtilities.nonNullSchema();
       SortTestFixture sortTest = new SortTestFixture(fixture);
       sortTest.addInput(fixture.rowSetBuilder(schema)
           .addRow(2, "second")
@@ -287,7 +287,7 @@ public class TestSortImpl extends DrillTest {
   @Test
   public void testTwoBatches() throws Exception {
     try (OperatorFixture fixture = OperatorFixture.standardFixture(dirTestWatcher)) {
-      BatchSchema schema = SortTestUtilities.nonNullSchema();
+      TupleMetadata schema = SortTestUtilities.nonNullSchema();
       SortTestFixture sortTest = new SortTestFixture(fixture);
       sortTest.addInput(fixture.rowSetBuilder(schema)
           .addRow(2, "second")
@@ -313,7 +313,7 @@ public class TestSortImpl extends DrillTest {
 
   public static class DataGenerator {
     private final OperatorFixture fixture;
-    private final BatchSchema schema;
+    private final TupleMetadata schema;
     private final int targetCount;
     private final int batchSize;
     private final int step;
@@ -533,7 +533,7 @@ public class TestSortImpl extends DrillTest {
     for (int i = 0; i < colCount; i++) {
       builder.add("col" + (i+1), MinorType.INT);
     }
-    BatchSchema schema = builder.build();
+    TupleMetadata schema = builder.buildSchema();
     ExtendableRowSet rowSet = fixture.rowSet(schema);
     RowSetWriter writer = rowSet.writer(rowCount);
     for (int i = 0; i < rowCount; i++) {
@@ -593,7 +593,7 @@ public class TestSortImpl extends DrillTest {
     builder.configBuilder()
       .put(ExecConstants.EXTERNAL_SORT_BATCH_LIMIT, 2);
     try (OperatorFixture fixture = builder.build()) {
-      BatchSchema schema = SortTestUtilities.nonNullSchema();
+      TupleMetadata schema = SortTestUtilities.nonNullSchema();
       SortTestFixture sortTest = new SortTestFixture(fixture) {
         @Override
         protected void validateSort(SortImpl sort) {

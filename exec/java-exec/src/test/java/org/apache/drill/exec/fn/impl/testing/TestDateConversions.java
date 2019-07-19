@@ -17,7 +17,6 @@
  */
 package org.apache.drill.exec.fn.impl.testing;
 
-import mockit.integration.junit4.JMockit;
 import org.apache.drill.test.BaseTestQuery;
 import org.apache.drill.categories.SqlFunctionTest;
 import org.apache.drill.categories.UnlikelyTest;
@@ -25,7 +24,6 @@ import org.apache.drill.common.exceptions.UserException;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
@@ -37,7 +35,6 @@ import java.time.LocalTime;
 import static org.hamcrest.CoreMatchers.startsWith;
 import static org.junit.Assert.assertThat;
 
-@RunWith(JMockit.class)
 @Category({UnlikelyTest.class, SqlFunctionTest.class})
 public class TestDateConversions extends BaseTestQuery {
 
@@ -108,6 +105,18 @@ public class TestDateConversions extends BaseTestQuery {
       .baselineValues(true, true)
       .baselineValues(false, true)
       .go();
+  }
+
+  @Test
+  public void testToTimeWithDateTimePatternFormat() throws Exception {
+    mockUsDateFormatSymbols();
+
+    testBuilder()
+        .sqlQuery("select TO_TIME('2016-03-03 00:00', 'yyyy-MM-dd HH:mm') as `result` from (values(1))")
+        .unOrdered()
+        .baselineColumns("result")
+        .baselineValues(LocalTime.of(0,0,0))
+        .go();
   }
 
   @Test

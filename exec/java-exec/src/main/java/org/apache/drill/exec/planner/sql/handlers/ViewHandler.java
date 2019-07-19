@@ -35,6 +35,7 @@ import org.apache.drill.exec.planner.sql.SchemaUtilites;
 import org.apache.drill.exec.planner.sql.parser.SqlCreateView;
 import org.apache.drill.exec.planner.sql.parser.SqlDropView;
 import org.apache.drill.exec.store.AbstractSchema;
+import org.apache.drill.exec.store.dfs.FileSelection;
 import org.apache.drill.exec.work.foreman.ForemanSetupException;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.sql.SqlNode;
@@ -60,12 +61,13 @@ public abstract class ViewHandler extends DefaultSqlHandler {
     public PhysicalPlan getPlan(SqlNode sqlNode) throws ValidationException, RelConversionException, IOException, ForemanSetupException {
       SqlCreateView createView = unwrap(sqlNode, SqlCreateView.class);
 
-      final String newViewName = createView.getName();
+      final String newViewName = FileSelection.removeLeadingSlash(createView.getName());
 
       // Disallow temporary tables usage in view definition
       config.getConverter().disallowTemporaryTables();
       // Store the viewSql as view def SqlNode is modified as part of the resolving the new table definition below.
-      final String viewSql = createView.getQuery().toString();
+      // Use of parentheses is forced to ensure expressions are read correctly.
+      final String viewSql = createView.getQuery().toSqlString(null, true).getSql();
       final ConvertedRelNode convertedRelNode = validateAndConvert(createView.getQuery());
       final RelDataType validatedRowType = convertedRelNode.getValidatedRowType();
       final RelNode queryRelNode = convertedRelNode.getConvertedNode();
@@ -87,7 +89,7 @@ public abstract class ViewHandler extends DefaultSqlHandler {
 
       final boolean replaced = drillSchema.createView(view);
       final String summary = String.format("View '%s' %s successfully in '%s' schema",
-          createView.getName(), replaced ? "replaced" : "created", drillSchema.getFullSchemaName());
+          newViewName, replaced ? "replaced" : "created", drillSchema.getFullSchemaName());
 
       return DirectPlan.createDirectPlan(context, true, summary);
     }
@@ -113,7 +115,7 @@ public abstract class ViewHandler extends DefaultSqlHandler {
         || context.getSession().isTemporaryTable(drillSchema, context.getConfig(), viewName);
       final boolean isView = (table != null && table.getJdbcTableType() == Schema.TableType.VIEW);
 
-      switch (view.getcreateViewType()) {
+      switch (view.getSqlCreateType()) {
         case SIMPLE:
           if (isTable) {
             throw UserException
@@ -153,9 +155,9 @@ public abstract class ViewHandler extends DefaultSqlHandler {
     }
 
     @Override
-    public PhysicalPlan getPlan(SqlNode sqlNode) throws ValidationException, RelConversionException, IOException, ForemanSetupException {
+    public PhysicalPlan getPlan(SqlNode sqlNode) throws IOException, ForemanSetupException {
       SqlDropView dropView = unwrap(sqlNode, SqlDropView.class);
-      final String viewName = dropView.getName();
+      final String viewName = FileSelection.removeLeadingSlash(dropView.getName());
       final AbstractSchema drillSchema =
           SchemaUtilites.resolveToMutableDrillSchema(context.getNewDefaultSchema(), dropView.getSchemaPath());
 

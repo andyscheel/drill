@@ -29,7 +29,7 @@ import org.apache.drill.exec.ops.FragmentContext;
 import org.apache.drill.exec.ops.FragmentStats;
 import org.apache.drill.exec.physical.base.PhysicalVisitor;
 import org.apache.drill.exec.planner.PhysicalPlanReader;
-import org.apache.drill.exec.planner.logical.DrillLogicalTestutils;
+import org.apache.drill.exec.planner.logical.DrillLogicalTestUtils;
 import org.apache.drill.exec.proto.CoordinationProtos;
 import org.apache.drill.exec.rpc.control.Controller;
 import org.apache.drill.exec.rpc.control.WorkEventBus;
@@ -38,11 +38,9 @@ import org.apache.drill.exec.server.QueryProfileStoreContext;
 import org.apache.drill.exec.store.dfs.DrillFileSystem;
 import org.apache.drill.exec.store.easy.json.JSONRecordReader;
 import org.apache.drill.exec.work.batch.IncomingBuffers;
-import org.apache.drill.exec.work.filter.RuntimeFilterSink;
 import org.apache.drill.exec.work.filter.RuntimeFilterWritable;
 import org.apache.drill.common.config.DrillConfig;
 import org.apache.drill.common.exceptions.ExecutionSetupException;
-import org.apache.drill.common.expression.LogicalExpression;
 import org.apache.drill.common.expression.SchemaPath;
 import org.apache.drill.common.logical.data.JoinCondition;
 import org.apache.drill.common.logical.data.NamedExpression;
@@ -58,6 +56,7 @@ import org.apache.drill.exec.record.VectorAccessible;
 import org.apache.drill.exec.server.DrillbitContext;
 import org.apache.drill.exec.store.RecordReader;
 import org.apache.drill.exec.rpc.NamedThreadFactory;
+import org.apache.hadoop.fs.Path;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -75,6 +74,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class PhysicalOpUnitTestBase extends ExecTest {
   protected MockExecutorFragmentContext fragContext;
@@ -115,21 +115,16 @@ public class PhysicalOpUnitTestBase extends ExecTest {
     scanDecodeExecutor.shutdownNow();
   }
 
-  @Override
-  protected LogicalExpression parseExpr(String expr) {
-    return DrillLogicalTestutils.parseExpr(expr);
-  }
-
   protected Order.Ordering ordering(String expression, RelFieldCollation.Direction direction, RelFieldCollation.NullDirection nullDirection) {
-    return DrillLogicalTestutils.ordering(expression, direction, nullDirection);
+    return DrillLogicalTestUtils.ordering(expression, direction, nullDirection);
   }
 
   protected JoinCondition joinCond(String leftExpr, String relationship, String rightExpr) {
-    return DrillLogicalTestutils.joinCond(leftExpr, relationship, rightExpr);
+    return DrillLogicalTestUtils.joinCond(leftExpr, relationship, rightExpr);
   }
 
   protected List<NamedExpression> parseExprs(String... expressionsAndOutputNames) {
-    return DrillLogicalTestutils.parseExprs(expressionsAndOutputNames);
+    return DrillLogicalTestUtils.parseExprs(expressionsAndOutputNames);
   }
 
   protected static class BatchIterator implements Iterable<VectorAccessible> {
@@ -204,12 +199,10 @@ public class PhysicalOpUnitTestBase extends ExecTest {
    * </p>
    */
   protected static class MockExecutorFragmentContext extends OperatorFixture.MockFragmentContext implements ExecutorFragmentContext {
-    private RuntimeFilterSink runtimeFilterSink;
 
     public MockExecutorFragmentContext(final FragmentContext fragmentContext) {
       super(fragmentContext.getConfig(), fragmentContext.getOptions(), fragmentContext.getAllocator(),
         fragmentContext.getScanExecutor(), fragmentContext.getScanDecodeExecutor());
-      this.runtimeFilterSink = new RuntimeFilterSink(fragmentContext.getAllocator(), Executors.newCachedThreadPool());
     }
 
     @Override
@@ -307,12 +300,17 @@ public class PhysicalOpUnitTestBase extends ExecTest {
 
     @Override
     public void addRuntimeFilter(RuntimeFilterWritable runtimeFilter) {
-      this.runtimeFilterSink.aggregate(runtimeFilter);
     }
 
     @Override
-    public RuntimeFilterSink getRuntimeFilterSink() {
-      return runtimeFilterSink;
+    public RuntimeFilterWritable getRuntimeFilter(long rfIdentifier) {
+      return null;
+    }
+
+    @Override
+    public RuntimeFilterWritable getRuntimeFilter(long rfIdentifier, long maxWaitTime, TimeUnit timeUnit)
+    {
+      return null;
     }
   }
 
@@ -402,9 +400,9 @@ public class PhysicalOpUnitTestBase extends ExecTest {
    * @param columnsToRead
    * @return The {@link org.apache.drill.exec.store.easy.json.JSONRecordReader} corresponding to each given input path.
    */
-  public static Iterator<RecordReader> getJsonReadersFromInputFiles(DrillFileSystem fs, List<String> inputPaths, FragmentContext fragContext, List<SchemaPath> columnsToRead) {
+  public static Iterator<RecordReader> getJsonReadersFromInputFiles(DrillFileSystem fs, List<Path> inputPaths, FragmentContext fragContext, List<SchemaPath> columnsToRead) {
     List<RecordReader> readers = new ArrayList<>();
-    for (String inputPath : inputPaths) {
+    for (Path inputPath : inputPaths) {
       readers.add(new JSONRecordReader(fragContext, inputPath, fs, columnsToRead));
     }
     return readers.iterator();

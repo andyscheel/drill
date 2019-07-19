@@ -17,6 +17,18 @@
  */
 package org.apache.drill.exec.store.hive;
 
+import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rel.type.RelDataTypeField;
+import org.apache.drill.common.types.Types;
+import org.apache.drill.exec.planner.sql.TypeInferenceUtils;
+import org.apache.drill.exec.planner.types.HiveToRelDataTypeConverter;
+import org.apache.drill.exec.record.MaterializedField;
+import org.apache.drill.exec.record.metadata.ColumnMetadata;
+import org.apache.drill.exec.record.metadata.MapColumnMetadata;
+import org.apache.drill.exec.record.metadata.MetadataUtils;
+import org.apache.drill.exec.record.metadata.PrimitiveColumnMetadata;
+import org.apache.drill.exec.record.metadata.TupleMetadata;
+import org.apache.drill.exec.record.metadata.TupleSchema;
 import org.apache.drill.shaded.guava.com.google.common.base.Preconditions;
 import org.apache.drill.shaded.guava.com.google.common.base.Strings;
 import io.netty.buffer.DrillBuf;
@@ -56,6 +68,7 @@ import org.apache.drill.exec.work.ExecErrorConstants;
 import org.apache.hadoop.hive.common.type.HiveDecimal;
 import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.MetaStoreUtils;
+import org.apache.hadoop.hive.metastore.api.Partition;
 import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.hive.ql.exec.Utilities;
@@ -516,7 +529,7 @@ public class HiveUtilities {
         .append("Unsupported Hive data type ").append(unsupportedType).append(". ")
         .append(System.lineSeparator())
         .append("Following Hive data types are supported in Drill for querying: ")
-        .append("BOOLEAN, TINYINT, SMALLINT, INT, BIGINT, FLOAT, DOUBLE, DATE, TIMESTAMP, BINARY, DECIMAL, STRING, VARCHAR and CHAR");
+        .append("BOOLEAN, TINYINT, SMALLINT, INT, BIGINT, FLOAT, DOUBLE, DATE, TIMESTAMP, BINARY, DECIMAL, STRING, VARCHAR, CHAR, ARRAY.");
 
     throw UserException.unsupportedError()
         .message(errMsg.toString())
@@ -705,8 +718,7 @@ public class HiveUtilities {
       final Category category = TypeInfoUtils.getTypeInfoFromTypeString(hiveField.getType()).getCategory();
       if (category == Category.MAP ||
           category == Category.STRUCT ||
-          category == Category.UNION ||
-          category == Category.LIST) {
+          category == Category.UNION) {
         logger.debug("Hive table contains unsupported data type: {}", category);
         return true;
       }
@@ -743,5 +755,108 @@ public class HiveUtilities {
     return newHiveConf;
   }
 
+  /**
+   * Helper method which stores partition columns in table columnListCache. If table columnListCache has exactly the
+   * same columns as partition, in partition stores columns index that corresponds to identical column list.
+   * If table columnListCache hasn't such column list, the column list adds to table columnListCache and in partition
+   * stores columns index that corresponds to column list.
+   *
+   * @param table     hive table instance
+   * @param partition partition instance
+   * @return hive partition wrapper
+   */
+  public static HiveTableWrapper.HivePartitionWrapper createPartitionWithSpecColumns(HiveTableWithColumnCache table, Partition partition) {
+    int listIndex = table.getColumnListsCache().addOrGet(partition.getSd().getCols());
+    return new HiveTableWrapper.HivePartitionWrapper(new HivePartition(partition, listIndex));
+  }
+
+  /**
+   * Converts specified {@code RelDataType relDataType} into {@link ColumnMetadata}.
+   * For the case when specified relDataType is struct, map with recursively converted children
+   * will be created.
+   *
+   * @param name        filed name
+   * @param relDataType filed type
+   * @return {@link ColumnMetadata} which corresponds to specified {@code RelDataType relDataType}
+   */
+  public static ColumnMetadata getColumnMetadata(String name, RelDataType relDataType) {
+    switch (relDataType.getSqlTypeName()) {
+      case ARRAY:
+        return getArrayMetadata(name, relDataType);
+      case MAP:
+      case OTHER:
+        throw new UnsupportedOperationException(String.format("Unsupported data type: %s", relDataType.getSqlTypeName()));
+      default:
+        if (relDataType.isStruct()) {
+          return getStructMetadata(name, relDataType);
+        } else {
+          return new PrimitiveColumnMetadata(
+              MaterializedField.create(name,
+                  TypeInferenceUtils.getDrillMajorTypeFromCalciteType(relDataType)));
+        }
+    }
+  }
+
+  /**
+   * Returns {@link ColumnMetadata} instance which corresponds to specified array {@code RelDataType relDataType}.
+   *
+   * @param name        name of the filed
+   * @param relDataType the source of type information to construct the schema
+   * @return {@link ColumnMetadata} instance
+   */
+  private static ColumnMetadata getArrayMetadata(String name, RelDataType relDataType) {
+    RelDataType componentType = relDataType.getComponentType();
+    ColumnMetadata childColumnMetadata = getColumnMetadata(name, componentType);
+    switch (componentType.getSqlTypeName()) {
+      case ARRAY:
+        // for the case when nested type is array, it should be placed into repeated list
+        return MetadataUtils.newRepeatedList(name, childColumnMetadata);
+      case MAP:
+      case OTHER:
+        throw new UnsupportedOperationException(String.format("Unsupported data type: %s", relDataType.getSqlTypeName()));
+      default:
+        if (componentType.isStruct()) {
+          // for the case when nested type is struct, it should be placed into repeated map
+          return MetadataUtils.newMapArray(name, childColumnMetadata.mapSchema());
+        } else {
+          // otherwise creates column metadata with repeated data mode
+          return new PrimitiveColumnMetadata(
+              MaterializedField.create(name,
+                  Types.overrideMode(
+                      TypeInferenceUtils.getDrillMajorTypeFromCalciteType(componentType),
+                      DataMode.REPEATED)));
+        }
+    }
+  }
+
+  /**
+   * Returns {@link MapColumnMetadata} column metadata created based on specified {@code RelDataType relDataType} with
+   * converted to {@link ColumnMetadata} {@code relDataType}'s children.
+   *
+   * @param name        name of the filed
+   * @param relDataType {@link RelDataType} the source of the children for resulting schema
+   * @return {@link MapColumnMetadata} column metadata
+   */
+  private static MapColumnMetadata getStructMetadata(String name, RelDataType relDataType) {
+    TupleMetadata mapSchema = new TupleSchema();
+    for (RelDataTypeField relDataTypeField : relDataType.getFieldList()) {
+      mapSchema.addColumn(getColumnMetadata(relDataTypeField.getName(), relDataTypeField.getType()));
+    }
+    return MetadataUtils.newMap(name, mapSchema);
+  }
+
+  /**
+   * Converts specified {@code FieldSchema column} into {@link ColumnMetadata}.
+   * For the case when specified relDataType is struct, map with recursively converted children
+   * will be created.
+   *
+   * @param dataTypeConverter converter to obtain Calcite's types from Hive's ones
+   * @param column            column to convert
+   * @return {@link ColumnMetadata} which corresponds to specified {@code FieldSchema column}
+   */
+  public static ColumnMetadata getColumnMetadata(HiveToRelDataTypeConverter dataTypeConverter, FieldSchema column) {
+    RelDataType relDataType = dataTypeConverter.convertToNullableRelDataType(column);
+    return getColumnMetadata(column.getName(), relDataType);
+  }
 }
 

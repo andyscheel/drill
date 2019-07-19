@@ -34,8 +34,6 @@ import org.apache.calcite.rex.RexNode;
 import org.apache.drill.exec.planner.DrillRelBuilder;
 import org.apache.drill.exec.planner.physical.PrelFactories;
 
-import java.util.List;
-
 import java.util.ArrayList;
 import java.util.List;
 
@@ -49,15 +47,11 @@ import java.util.List;
 public class DrillMergeProjectRule extends RelOptRule {
 
   private FunctionImplementationRegistry functionRegistry;
-  private static DrillMergeProjectRule INSTANCE = null;
   private final boolean force;
 
   public static DrillMergeProjectRule getInstance(boolean force, ProjectFactory pFactory,
       FunctionImplementationRegistry functionRegistry) {
-    if (INSTANCE == null) {
-      INSTANCE = new DrillMergeProjectRule(force, pFactory, functionRegistry);
-    }
-    return INSTANCE;
+    return new DrillMergeProjectRule(force, pFactory, functionRegistry);
   }
 
   private DrillMergeProjectRule(boolean force, ProjectFactory pFactory,

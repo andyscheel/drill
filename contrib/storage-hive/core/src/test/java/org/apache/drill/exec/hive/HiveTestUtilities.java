@@ -17,11 +17,26 @@
  */
 package org.apache.drill.exec.hive;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.EnumSet;
+import java.util.Set;
+
+import org.apache.drill.test.TestTools;
 import org.apache.hadoop.hive.ql.CommandNeedRetryException;
 import org.apache.hadoop.hive.ql.Driver;
 import org.apache.hadoop.hive.ql.processors.CommandProcessorResponse;
 
 public class HiveTestUtilities {
+
+  /**
+   * Set of all posix permissions to be assigned to newly created file in
+   * {@link HiveTestUtilities#createDirWithPosixPermissions(File, String)}
+   */
+  private static final Set<PosixFilePermission> ALL_POSIX_PERMISSIONS = EnumSet.allOf(PosixFilePermission.class);
 
   /**
    * Execute the give <i>query</i> on given <i>hiveDriver</i> instance. If a {@link CommandNeedRetryException}
@@ -47,4 +62,53 @@ public class HiveTestUtilities {
           query, (response != null ? response.getErrorMessage() : "")));
     }
   }
+
+  /**
+   * Creates desired directory structure and
+   * adds all posix permissions to created directory.
+   *
+   * @param parentDir parent directory
+   * @param dirName directory name
+   * @return file representing created dir with all posix permissions
+   */
+  public static File createDirWithPosixPermissions(File parentDir, String dirName) {
+    File dir = new File(parentDir, dirName);
+    dir.mkdirs();
+    Path path = dir.toPath();
+    try {
+      Files.setPosixFilePermissions(path, ALL_POSIX_PERMISSIONS);
+    } catch (IOException e) {
+      throw new RuntimeException(
+          String.format("Failed to set all posix permissions for directory [%s]", dir), e);
+    }
+    return dir;
+  }
+
+  /**
+   * Load data from test resources file into table.
+   *
+   * @param driver hive driver
+   * @param tableName destination
+   * @param relativeTestResourcePath path to test resource
+   */
+  public static void loadData(Driver driver, String tableName, Path relativeTestResourcePath){
+    String dataAbsPath = TestTools.getResourceFile(relativeTestResourcePath).getAbsolutePath();
+    String loadDataSql = String.format("LOAD DATA LOCAL INPATH '%s' OVERWRITE INTO TABLE %s", dataAbsPath, tableName);
+    executeQuery(driver, loadDataSql);
+  }
+
+  /**
+   * Performs insert from select.
+   *
+   * @param driver hive driver
+   * @param srcTable source
+   * @param destTable destination
+   */
+  public static void insertData(Driver driver, String srcTable, String destTable){
+    executeQuery(driver, String.format(
+        "INSERT OVERWRITE TABLE %s SELECT * FROM %s",
+        destTable, srcTable
+    ));
+  }
+
 }

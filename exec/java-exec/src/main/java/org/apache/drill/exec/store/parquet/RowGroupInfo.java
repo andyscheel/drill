@@ -19,11 +19,11 @@ package org.apache.drill.exec.store.parquet;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import org.apache.drill.exec.expr.stat.ParquetFilterPredicate.RowsMatch;
 import org.apache.drill.exec.store.dfs.ReadEntryFromHDFS;
 import org.apache.drill.exec.store.dfs.easy.FileWork;
 import org.apache.drill.exec.store.schedule.CompleteWork;
 import org.apache.drill.exec.store.schedule.EndpointByteMap;
+import org.apache.hadoop.fs.Path;
 
 import java.util.List;
 
@@ -36,10 +36,9 @@ public class RowGroupInfo extends ReadEntryFromHDFS implements CompleteWork, Fil
   private List<? extends ColumnMetadata> columns;
   private long rowCount;  // rowCount = -1 indicates to include all rows.
   private long numRecordsToRead;
-  private RowsMatch rowsMatch = RowsMatch.SOME;
 
   @JsonCreator
-  public RowGroupInfo(@JsonProperty("path") String path,
+  public RowGroupInfo(@JsonProperty("path") Path path,
                       @JsonProperty("start") long start,
                       @JsonProperty("length") long length,
                       @JsonProperty("rowGroupIndex") int rowGroupIndex,
@@ -96,8 +95,4 @@ public class RowGroupInfo extends ReadEntryFromHDFS implements CompleteWork, Fil
   public void setColumns(List<? extends ColumnMetadata> columns) {
     this.columns = columns;
   }
-
-  public RowsMatch getRowsMatch() { return rowsMatch; }
-
-  public void setRowsMatch(RowsMatch rowsMatch) { this.rowsMatch = rowsMatch; }
 }

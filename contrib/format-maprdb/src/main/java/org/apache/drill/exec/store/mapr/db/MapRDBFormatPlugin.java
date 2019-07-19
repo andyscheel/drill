@@ -24,6 +24,7 @@ import java.util.Set;
 import org.apache.drill.common.expression.SchemaPath;
 import org.apache.drill.common.logical.StoragePluginConfig;
 import org.apache.drill.exec.physical.base.AbstractGroupScan;
+import org.apache.drill.exec.planner.common.DrillStatsTable.TableStatistics;
 import org.apache.drill.exec.server.DrillbitContext;
 import org.apache.drill.exec.store.StoragePluginOptimizerRule;
 import org.apache.drill.exec.store.dfs.FileSelection;
@@ -34,7 +35,9 @@ import org.apache.drill.exec.store.mapr.TableFormatPlugin;
 import org.apache.drill.exec.store.mapr.db.binary.BinaryTableGroupScan;
 import org.apache.drill.exec.store.mapr.db.json.JsonScanSpec;
 import org.apache.drill.exec.store.mapr.db.json.JsonTableGroupScan;
+import org.apache.drill.exec.metastore.MetadataProviderManager;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.client.Connection;
@@ -44,9 +47,11 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.drill.shaded.guava.com.google.common.collect.ImmutableSet;
 import com.mapr.db.index.IndexDesc;
 import com.mapr.fs.tables.TableProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class MapRDBFormatPlugin extends TableFormatPlugin {
-  static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(MapRDBFormatPlugin.class);
+  private static final Logger logger = LoggerFactory.getLogger(MapRDBFormatPlugin.class);
 
   private final MapRDBFormatMatcher matcher;
   private final Configuration hbaseConf;
@@ -113,25 +118,38 @@ public class MapRDBFormatPlugin extends TableFormatPlugin {
         MapRDBPushLimitIntoScan.LIMIT_ON_SCAN, MapRDBPushLimitIntoScan.LIMIT_ON_RKJOIN);
   }
 
-
   public AbstractGroupScan getGroupScan(String userName, FileSelection selection,
-      List<SchemaPath> columns, IndexDesc indexDesc) throws IOException {
+      List<SchemaPath> columns, IndexDesc indexDesc, MetadataProviderManager metadataProviderManager) throws IOException {
     String tableName = getTableName(selection);
     TableProperties props = getMaprFS().getTableProperties(new Path(tableName));
 
     if (props.getAttr().getJson()) {
       JsonScanSpec scanSpec = new JsonScanSpec(tableName, indexDesc, null/*condition*/);
-      return new JsonTableGroupScan(userName, getStoragePlugin(), this, scanSpec, columns);
+      return new JsonTableGroupScan(userName, getStoragePlugin(), this, scanSpec, columns, metadataProviderManager);
     } else {
       HBaseScanSpec scanSpec = new HBaseScanSpec(tableName);
-      return new BinaryTableGroupScan(userName, getStoragePlugin(), this, scanSpec, columns);
+      return new BinaryTableGroupScan(userName, getStoragePlugin(), this, scanSpec, columns, metadataProviderManager);
     }
   }
 
   @Override
   public AbstractGroupScan getGroupScan(String userName, FileSelection selection,
       List<SchemaPath> columns) throws IOException {
-    return getGroupScan(userName, selection, columns, null /* indexDesc */);
+    return getGroupScan(userName, selection, columns, (IndexDesc) null /* indexDesc */, null /* metadataProviderManager */);
+  }
+
+  public boolean supportsStatistics() {
+    return false;
+  }
+
+  @Override
+  public TableStatistics readStatistics(FileSystem fs, Path statsTablePath) throws IOException {
+    throw new UnsupportedOperationException("unimplemented");
+  }
+
+  @Override
+  public void writeStatistics(TableStatistics statistics, FileSystem fs, Path statsTablePath) throws IOException {
+    throw new UnsupportedOperationException("unimplemented");
   }
 
   @JsonIgnore
@@ -164,9 +182,9 @@ public class MapRDBFormatPlugin extends TableFormatPlugin {
    */
   @JsonIgnore
   public String getTableName(FileSelection selection) {
-    List<String> files = selection.getFiles();
+    List<Path> files = selection.getFiles();
     assert (files.size() == 1);
-    return files.get(0);
+    return files.get(0).toUri().getPath();
   }
 
 }

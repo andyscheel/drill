@@ -24,7 +24,7 @@
   <parent>
     <artifactId>drill-root</artifactId>
     <groupId>org.apache.drill</groupId>
-    <version>1.15.0-SNAPSHOT</version>
+    <version>1.17.0-SNAPSHOT</version>
   </parent>
 
   <artifactId>drill-common</artifactId>
@@ -42,12 +42,7 @@
       <!-- add as provided scope so that we can compile TestTools.  Should only be ever used in a test scenario where someone else is bringing JUnit in. -->
       <groupId>junit</groupId>
       <artifactId>junit</artifactId>
-      <version>${dep.junit.version}</version>
-    </dependency>
-
-    <dependency>
-      <groupId>org.apache.calcite</groupId>
-      <artifactId>calcite-core</artifactId>
+      <version>${junit.version}</version>
     </dependency>
 
     <dependency>
@@ -99,12 +94,6 @@
     <dependency>
       <groupId>io.dropwizard.metrics</groupId>
       <artifactId>metrics-jmx</artifactId>
-    </dependency>
-
-    <dependency>
-      <groupId>org.antlr</groupId>
-      <artifactId>antlr-runtime</artifactId>
-      <version>3.4</version>
     </dependency>
 
     <dependency>

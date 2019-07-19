@@ -23,22 +23,27 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
 
+import org.apache.drill.categories.RowSetTests;
 import org.apache.drill.common.types.TypeProtos.DataMode;
 import org.apache.drill.common.types.TypeProtos.MinorType;
 import org.apache.drill.exec.physical.rowSet.ResultSetLoader;
 import org.apache.drill.exec.physical.rowSet.RowSetLoader;
 import org.apache.drill.exec.physical.rowSet.impl.ResultSetLoaderImpl.ResultSetOptions;
 import org.apache.drill.exec.record.BatchSchema;
+import org.apache.drill.exec.record.BatchSchemaBuilder;
+import org.apache.drill.exec.record.metadata.SchemaBuilder;
+import org.apache.drill.exec.record.metadata.TupleMetadata;
 import org.apache.drill.exec.vector.ValueVector;
 import org.apache.drill.exec.vector.accessor.ScalarWriter;
 import org.apache.drill.test.SubOperatorTest;
 import org.apache.drill.test.rowSet.RowSet;
 import org.apache.drill.test.rowSet.RowSet.SingleRowSet;
-import org.apache.drill.test.rowSet.RowSetComparison;
 import org.apache.drill.test.rowSet.RowSetReader;
-import org.apache.drill.test.rowSet.schema.SchemaBuilder;
+import org.apache.drill.test.rowSet.RowSetUtilities;
 import org.junit.Test;
+import org.junit.experimental.categories.Category;
 
+@Category(RowSetTests.class)
 public class TestResultSetSchemaChange extends SubOperatorTest {
 
   /**
@@ -128,14 +133,14 @@ public class TestResultSetSchemaChange extends SubOperatorTest {
 
     RowSet actual = fixture.wrap(rsLoader.harvest());
 
-    BatchSchema expectedSchema = new SchemaBuilder()
+    TupleMetadata expectedSchema = new SchemaBuilder()
         .add("a", MinorType.VARCHAR)
         .addNullable("b", MinorType.INT)
         .addNullable("c", MinorType.VARCHAR)
         .add("d", MinorType.VARCHAR)
         .add("e", MinorType.INT)
         .addArray("f", MinorType.VARCHAR)
-        .build();
+        .buildSchema();
     SingleRowSet expected = fixture.rowSetBuilder(expectedSchema)
         .addRow("a_1", null, null,   "",       0, strArray())
         .addRow("a_2", null, null,   "",       0, strArray())
@@ -149,8 +154,7 @@ public class TestResultSetSchemaChange extends SubOperatorTest {
         .addRow("a_10",  10, "c_10", "d_10", 100, strArray("f_10-1", "f_10-2"))
         .build();
 
-    new RowSetComparison(expected)
-        .verifyAndClearAll(actual);
+    RowSetUtilities.verify(expected, actual);
     rsLoader.close();
   }
 
@@ -204,8 +208,10 @@ public class TestResultSetSchemaChange extends SubOperatorTest {
 
     // Result should include only the first column.
 
-    BatchSchema expectedSchema = new SchemaBuilder()
-        .add("a", MinorType.VARCHAR)
+    SchemaBuilder schemaBuilder = new SchemaBuilder()
+      .add("a", MinorType.VARCHAR);
+    BatchSchema expectedSchema = new BatchSchemaBuilder()
+        .withSchemaBuilder(schemaBuilder)
         .build();
     RowSet result = fixture.wrap(rsLoader.harvest());
     assertTrue(result.batchSchema().isEquivalent(expectedSchema));
@@ -226,12 +232,14 @@ public class TestResultSetSchemaChange extends SubOperatorTest {
     result = fixture.wrap(rsLoader.harvest());
     assertEquals(5, rsLoader.schemaVersion());
     assertEquals(1, result.rowCount());
-    expectedSchema = new SchemaBuilder(expectedSchema)
+    BatchSchemaBuilder batchSchemaBuilder = new BatchSchemaBuilder(expectedSchema);
+    batchSchemaBuilder.schemaBuilder()
         .addNullable("b", MinorType.INT)
         .addNullable("c", MinorType.VARCHAR)
         .add("d", MinorType.INT)
-        .add("e", MinorType.INT)
-        .build();
+        .add("e", MinorType.INT);
+
+    expectedSchema = batchSchemaBuilder.build();
     assertTrue(result.batchSchema().isEquivalent(expectedSchema));
     RowSetReader reader = result.reader();
     reader.next();

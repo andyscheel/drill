@@ -21,7 +21,7 @@ import static org.apache.drill.shaded.guava.com.google.common.base.Preconditions
 
 import com.sun.codemodel.JOp;
 import org.apache.drill.common.exceptions.DrillRuntimeException;
-import org.apache.drill.common.expression.FieldReference;
+import org.apache.drill.common.expression.FunctionHolderExpression;
 import org.apache.drill.common.types.TypeProtos.DataMode;
 import org.apache.drill.common.types.TypeProtos.MajorType;
 import org.apache.drill.exec.expr.ClassGenerator;
@@ -36,9 +36,11 @@ import com.sun.codemodel.JExpr;
 import com.sun.codemodel.JExpression;
 import com.sun.codemodel.JMod;
 import com.sun.codemodel.JVar;
+import org.apache.drill.exec.vector.ValueHolderHelper;
+
+import java.util.List;
 
 public class DrillSimpleFuncHolder extends DrillFuncHolder {
-  static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(DrillSimpleFuncHolder.class);
 
   private final String drillFuncClass;
   // each function should be wrapped unique class loader associated with its jar
@@ -75,7 +77,8 @@ public class DrillSimpleFuncHolder extends DrillFuncHolder {
 
   @Override
   public HoldingContainer renderEnd(ClassGenerator<?> classGenerator, HoldingContainer[] inputVariables,
-                                    JVar[] workspaceJVars, FieldReference fieldReference) {
+                                    JVar[] workspaceJVars, FunctionHolderExpression holderExpr) {
+
     //If the function's annotation specifies a parameter has to be constant expression, but the HoldingContainer
     //for the argument is not, then raise exception.
     for (int i = 0; i < inputVariables.length; i++) {
@@ -84,14 +87,14 @@ public class DrillSimpleFuncHolder extends DrillFuncHolder {
       }
     }
     generateBody(classGenerator, BlockType.SETUP, setupBody(), inputVariables, workspaceJVars, true);
-    HoldingContainer c = generateEvalBody(classGenerator, inputVariables, evalBody(), workspaceJVars, fieldReference);
+    HoldingContainer c = generateEvalBody(classGenerator, inputVariables, evalBody(), workspaceJVars, holderExpr);
     generateBody(classGenerator, BlockType.RESET, resetBody(), null, workspaceJVars, false);
     generateBody(classGenerator, BlockType.CLEANUP, cleanupBody(), null, workspaceJVars, false);
     return c;
   }
 
   protected HoldingContainer generateEvalBody(ClassGenerator<?> g, HoldingContainer[] inputVariables, String body,
-                                              JVar[] workspaceJVars, FieldReference ref) {
+                                              JVar[] workspaceJVars, FunctionHolderExpression holderExpr) {
 
     g.getEvalBlock().directStatement(String.format("//---- start of eval portion of %s function. ----//", getRegisteredNames()[0]));
 
@@ -127,6 +130,8 @@ public class DrillSimpleFuncHolder extends DrillFuncHolder {
         JConditional jc = sub._if(e);
         jc._then().assign(out.getIsSet(), JExpr.lit(0));
         sub = jc._else();
+      } else if (holderExpr.getMajorType().getMode() == DataMode.OPTIONAL) {
+        returnValueType = getReturnType().toBuilder().setMode(DataMode.OPTIONAL).build();
       }
     }
 
@@ -140,12 +145,14 @@ public class DrillSimpleFuncHolder extends DrillFuncHolder {
 
     JVar internalOutput = sub.decl(JMod.FINAL, g.getHolderType(returnValueType), getReturnValue().getName(), JExpr._new(g.getHolderType(returnValueType)));
     addProtectedBlock(g, sub, body, inputVariables, workspaceJVars, false);
-    if (sub != topSub) {
-      sub.assign(internalOutput.ref("isSet"),JExpr.lit(1));// Assign null if NULL_IF_NULL mode
+
+    List<String> holderFields = ValueHolderHelper.getHolderParams(returnValueType);
+    for (String holderField : holderFields) {
+      sub.assign(out.f(holderField), internalOutput.ref(holderField));
     }
-    sub.assign(out.getHolder(), internalOutput);
+
     if (sub != topSub) {
-      sub.assign(internalOutput.ref("isSet"),JExpr.lit(1));// Assign null if NULL_IF_NULL mode
+      sub.assign(out.f("isSet"),JExpr.lit(1));  // Assign null if NULL_IF_NULL mode
     }
 
     g.getEvalBlock().directStatement(String.format("//---- end of eval portion of %s function. ----//", getRegisteredNames()[0]));

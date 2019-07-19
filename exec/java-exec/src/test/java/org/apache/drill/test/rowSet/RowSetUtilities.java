@@ -26,10 +26,14 @@ import org.apache.drill.common.types.TypeProtos.MajorType;
 import org.apache.drill.common.types.TypeProtos.MinorType;
 import org.apache.drill.exec.record.MaterializedField;
 import org.apache.drill.exec.record.selection.SelectionVector2;
+import org.apache.drill.exec.vector.VectorOverflowException;
 import org.apache.drill.exec.vector.accessor.ScalarWriter;
 import org.apache.drill.exec.vector.accessor.ValueType;
 import org.bouncycastle.util.Arrays;
 import org.joda.time.Duration;
+import org.joda.time.Instant;
+import org.joda.time.LocalDate;
+import org.joda.time.LocalTime;
 import org.joda.time.Period;
 
 /**
@@ -73,6 +77,10 @@ public class RowSetUtilities {
     writer.setObject(testDataFromInt(writer.valueType(), field.getType(), value));
   }
 
+  /**
+   * Create a test value that can be passed to setObject(). This value matches the
+   * value type for a writer.
+   */
   public static Object testDataFromInt(ValueType valueType, MajorType dataType, int value) {
     switch (valueType) {
     case BYTES:
@@ -102,6 +110,12 @@ public class RowSetUtilities {
       return BigDecimal.valueOf(value, dataType.getScale());
     case PERIOD:
       return periodFromInt(dataType.getMinorType(), value);
+    case DATE:
+      return new LocalDate(value);
+    case TIME:
+      return new LocalTime(value);
+    case TIMESTAMP:
+      return new Instant(value);
     default:
       throw new IllegalStateException("Unknown writer type: " + valueType);
     }
@@ -158,6 +172,9 @@ public class RowSetUtilities {
      case LONG:
      case STRING:
      case DECIMAL:
+     case DATE:
+     case TIME:
+     case TIMESTAMP:
        assertEquals(msg, expectedObj, actualObj);
        break;
      case PERIOD: {
@@ -245,4 +262,7 @@ public class RowSetUtilities {
     new RowSetComparison(expected).verifyAndClearAll(actual);
   }
 
+  public static BigDecimal dec(String value) {
+    return new BigDecimal(value);
+  }
 }

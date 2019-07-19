@@ -47,8 +47,6 @@ import org.apache.hadoop.fs.Path;
  */
 public class FileSystemSchemaFactory extends AbstractSchemaFactory {
 
-  public static final String DEFAULT_WS_NAME = "default";
-
   public static final String LOCAL_FS_SCHEME = "file";
 
   private List<WorkspaceSchemaFactory> factories;
@@ -71,7 +69,6 @@ public class FileSystemSchemaFactory extends AbstractSchemaFactory {
 
   @Override
   public void registerSchemas(SchemaConfig schemaConfig, SchemaPlus parent) throws IOException {
-    @SuppressWarnings("resource")
     FileSystemSchema schema = new FileSystemSchema(getName(), schemaConfig);
     SchemaPlus plusOfThis = parent.add(schema.getName(), schema);
     schema.setPlus(plusOfThis);
@@ -163,6 +160,21 @@ public class FileSystemSchemaFactory extends AbstractSchemaFactory {
     @Override
     public CreateTableEntry createNewTable(String tableName, List<String> partitionColumns, StorageStrategy storageStrategy) {
       return defaultSchema.createNewTable(tableName, partitionColumns, storageStrategy);
+    }
+
+    @Override
+    public CreateTableEntry createStatsTable(String tableName) {
+      return defaultSchema.createStatsTable(tableName);
+    }
+
+    @Override
+    public CreateTableEntry appendToStatsTable(String tableName) {
+      return defaultSchema.appendToStatsTable(tableName);
+    }
+
+    @Override
+    public Table getStatsTable(String tableName) {
+      return defaultSchema.getStatsTable(tableName);
     }
 
     @Override

@@ -23,6 +23,7 @@ import static org.junit.Assert.assertTrue;
 import java.util.List;
 
 import org.apache.drill.categories.OperatorTest;
+import org.apache.drill.categories.SlowTest;
 import org.apache.drill.common.util.DrillFileUtils;
 import org.apache.drill.exec.client.DrillClient;
 import org.apache.drill.exec.pop.PopUnitTestBase;
@@ -40,13 +41,12 @@ import org.apache.drill.shaded.guava.com.google.common.base.Charsets;
 import org.apache.drill.shaded.guava.com.google.common.io.Files;
 import org.junit.experimental.categories.Category;
 
-@Category(OperatorTest.class)
+@Category({OperatorTest.class, SlowTest.class})
 public class TestMergingReceiver extends PopUnitTestBase {
   // private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(TestMergingReceiver.class);
 
   @Test
   public void twoBitTwoExchange() throws Exception {
-    @SuppressWarnings("resource")
     final RemoteServiceSet serviceSet = RemoteServiceSet.getLocalServiceSet();
 
     try (final Drillbit bit1 = new Drillbit(CONFIG, serviceSet);
@@ -75,7 +75,6 @@ public class TestMergingReceiver extends PopUnitTestBase {
 
   @Test
   public void testMultipleProvidersMixedSizes() throws Exception {
-    @SuppressWarnings("resource")
     final RemoteServiceSet serviceSet = RemoteServiceSet.getLocalServiceSet();
 
     try (final Drillbit bit1 = new Drillbit(CONFIG, serviceSet);
@@ -99,7 +98,6 @@ public class TestMergingReceiver extends PopUnitTestBase {
         count += batchRowCount;
         batchLoader.load(queryData.getDef(), b.getData());
         for (final VectorWrapper<?> vw : batchLoader) {
-          @SuppressWarnings("resource")
           final ValueVector vv = vw.getValueVector();
           final ValueVector.Accessor va = vv.getAccessor();
           final MaterializedField materializedField = vv.getField();
@@ -124,7 +122,6 @@ public class TestMergingReceiver extends PopUnitTestBase {
 
   @Test
   public void handleEmptyBatch() throws Exception {
-    @SuppressWarnings("resource")
     final RemoteServiceSet serviceSet = RemoteServiceSet.getLocalServiceSet();
 
     try (final Drillbit bit1 = new Drillbit(CONFIG, serviceSet);
@@ -154,7 +151,6 @@ public class TestMergingReceiver extends PopUnitTestBase {
 
   @Test
   public void handleEmptyBatchNoSchema() throws Exception {
-    @SuppressWarnings("resource")
     final RemoteServiceSet serviceSet = RemoteServiceSet.getLocalServiceSet();
 
     try (final Drillbit bit1 = new Drillbit(CONFIG, serviceSet);
@@ -184,7 +180,6 @@ public class TestMergingReceiver extends PopUnitTestBase {
 
   @Test
   public void testMultipleProvidersEmptyBatches() throws Exception {
-    @SuppressWarnings("resource")
     final RemoteServiceSet serviceSet = RemoteServiceSet.getLocalServiceSet();
 
     try (final Drillbit bit1 = new Drillbit(CONFIG, serviceSet);
@@ -208,7 +203,6 @@ public class TestMergingReceiver extends PopUnitTestBase {
         count += batchRowCount;
         batchLoader.load(queryData.getDef(), b.getData());
         for (final VectorWrapper<?> vw : batchLoader) {
-          @SuppressWarnings("resource")
           final ValueVector vv = vw.getValueVector();
           final ValueVector.Accessor va = vv.getAccessor();
           final MaterializedField materializedField = vv.getField();

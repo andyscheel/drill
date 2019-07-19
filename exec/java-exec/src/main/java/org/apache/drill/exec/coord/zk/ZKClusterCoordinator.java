@@ -18,7 +18,6 @@
 package org.apache.drill.exec.coord.zk;
 
 import static org.apache.drill.shaded.guava.com.google.common.collect.Collections2.transform;
-
 import java.io.IOException;
 import java.util.Collection;
 import java.util.Collections;
@@ -31,11 +30,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.curator.framework.imps.DefaultACLProvider;
 import org.apache.drill.shaded.guava.com.google.common.base.Throwables;
 import org.apache.commons.collections.keyvalue.MultiKey;
 import org.apache.curator.RetryPolicy;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
+import org.apache.curator.framework.api.ACLProvider;
 import org.apache.curator.framework.state.ConnectionState;
 import org.apache.curator.framework.state.ConnectionStateListener;
 import org.apache.curator.retry.RetryNTimes;
@@ -56,7 +57,6 @@ import org.apache.drill.exec.coord.store.TransientStoreConfig;
 import org.apache.drill.exec.coord.store.TransientStoreFactory;
 import org.apache.drill.exec.proto.CoordinationProtos.DrillbitEndpoint;
 import org.apache.drill.exec.proto.CoordinationProtos.DrillbitEndpoint.State;
-
 import org.apache.drill.shaded.guava.com.google.common.base.Function;
 
 /**
@@ -78,15 +78,19 @@ public class ZKClusterCoordinator extends ClusterCoordinator {
   private ConcurrentHashMap<MultiKey, DrillbitEndpoint> endpointsMap = new ConcurrentHashMap<MultiKey,DrillbitEndpoint>();
   private static final Pattern ZK_COMPLEX_STRING = Pattern.compile("(^.*?)/(.*)/([^/]*)$");
 
-  public ZKClusterCoordinator(DrillConfig config) throws IOException{
-    this(config, null);
+  public ZKClusterCoordinator(DrillConfig config, String connect) {
+    this(config, connect, new DefaultACLProvider());
   }
 
-  public ZKClusterCoordinator(DrillConfig config, String connect) throws IOException {
+  public ZKClusterCoordinator(DrillConfig config, ACLProvider aclProvider) {
+    this(config, null, aclProvider);
+  }
+
+  public ZKClusterCoordinator(DrillConfig config, String connect, ACLProvider aclProvider) {
+
     connect = connect == null || connect.isEmpty() ? config.getString(ExecConstants.ZK_CONNECTION) : connect;
     String clusterId = config.getString(ExecConstants.SERVICE_NAME);
     String zkRoot = config.getString(ExecConstants.ZK_ROOT);
-
 
     // check if this is a complex zk string.  If so, parse into components.
     Matcher m = ZK_COMPLEX_STRING.matcher(connect);
@@ -99,6 +103,7 @@ public class ZKClusterCoordinator extends ClusterCoordinator {
     logger.debug("Connect {}, zkRoot {}, clusterId: " + clusterId, connect, zkRoot);
 
     this.serviceName = clusterId;
+
     RetryPolicy rp = new RetryNTimes(config.getInt(ExecConstants.ZK_RETRY_TIMES),
       config.getInt(ExecConstants.ZK_RETRY_DELAY));
     curator = CuratorFrameworkFactory.builder()
@@ -106,6 +111,7 @@ public class ZKClusterCoordinator extends ClusterCoordinator {
       .connectionTimeoutMs(config.getInt(ExecConstants.ZK_TIMEOUT))
       .retryPolicy(rp)
       .connectString(connect)
+      .aclProvider(aclProvider)
       .build();
     curator.getConnectionStateListenable().addListener(new InitialConnectionListener());
     curator.start();
@@ -149,7 +155,6 @@ public class ZKClusterCoordinator extends ClusterCoordinator {
         client.getConnectionStateListenable().removeListener(this);
       }
     }
-
   }
 
   private class EndpointListener implements ServiceCacheListener {
@@ -348,5 +353,4 @@ public class ZKClusterCoordinator extends ClusterCoordinator {
       .serializer(DrillServiceInstanceHelper.SERIALIZER)
       .build();
   }
-
 }

@@ -26,21 +26,25 @@ import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.drill.common.expression.SchemaPath;
+import org.apache.drill.exec.ExecConstants;
 import org.apache.drill.exec.planner.logical.DrillProjectRel;
 import org.apache.drill.exec.planner.logical.DrillScanRel;
 import org.apache.drill.exec.planner.logical.RelOptHelper;
 import org.apache.drill.exec.planner.physical.PlannerSettings;
 import org.apache.drill.exec.planner.physical.PrelUtil;
 import org.apache.drill.exec.planner.sql.DrillSqlOperator;
+import org.apache.drill.exec.server.options.OptionManager;
 import org.apache.drill.exec.store.StoragePluginOptimizerRule;
 import org.apache.drill.exec.store.hive.HiveDrillNativeParquetScan;
 import org.apache.drill.exec.store.hive.HiveMetadataProvider;
 import org.apache.drill.exec.store.hive.HiveReadEntry;
 import org.apache.drill.exec.store.hive.HiveScan;
+import org.apache.drill.exec.store.parquet.ParquetReaderConfig;
 import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -97,7 +101,7 @@ public class ConvertHiveParquetScanToDrillParquetScan extends StoragePluginOptim
       }
 
       final Map<String, String> partitionColMapping = getPartitionColMapping(hiveTable, partitionColumnLabel);
-      final DrillScanRel nativeScanRel = createNativeScanRel(partitionColMapping, hiveScanRel, logicalInputSplits);
+      final DrillScanRel nativeScanRel = createNativeScanRel(partitionColMapping, hiveScanRel, logicalInputSplits, settings.getOptions());
       if (hiveScanRel.getRowType().getFieldCount() == 0) {
         call.transformTo(nativeScanRel);
       } else {
@@ -136,9 +140,10 @@ public class ConvertHiveParquetScanToDrillParquetScan extends StoragePluginOptim
   /**
    * Helper method which creates a DrillScalRel with native HiveScan.
    */
-  private DrillScanRel createNativeScanRel(final Map<String, String> partitionColMapping,
-                                           final DrillScanRel hiveScanRel,
-                                           final List<HiveMetadataProvider.LogicalInputSplit> logicalInputSplits) throws Exception {
+  private DrillScanRel createNativeScanRel(Map<String, String> partitionColMapping,
+                                           DrillScanRel hiveScanRel,
+                                           List<HiveMetadataProvider.LogicalInputSplit> logicalInputSplits,
+                                           OptionManager options) throws IOException {
 
     final RelDataTypeFactory typeFactory = hiveScanRel.getCluster().getTypeFactory();
     final RelDataType varCharType = typeFactory.createSqlType(SqlTypeName.VARCHAR);
@@ -178,7 +183,8 @@ public class ConvertHiveParquetScanToDrillParquetScan extends StoragePluginOptim
             nativeScanCols,
             hiveScan.getStoragePlugin(),
             logicalInputSplits,
-            hiveScan.getConfProperties());
+            hiveScan.getConfProperties(),
+            ParquetReaderConfig.builder().withOptions(options).build());
 
     return new DrillScanRel(
         hiveScanRel.getCluster(),
@@ -216,17 +222,21 @@ public class ConvertHiveParquetScanToDrillParquetScan extends StoragePluginOptim
   /**
    * Apply any data format conversion expressions.
    */
-  private RexNode createColumnFormatConversion(final DrillScanRel hiveScanRel, final DrillScanRel nativeScanRel,
-      final String colName, final RexBuilder rb) {
+  private RexNode createColumnFormatConversion(DrillScanRel hiveScanRel, DrillScanRel nativeScanRel,
+      String colName, RexBuilder rb) {
 
-    final RelDataType outputType = hiveScanRel.getRowType().getField(colName, false, false).getType();
-    final RelDataTypeField inputField = nativeScanRel.getRowType().getField(colName, false, false);
-    final RexInputRef inputRef = rb.makeInputRef(inputField.getType(), inputField.getIndex());
+    RelDataType outputType = hiveScanRel.getRowType().getField(colName, false, false).getType();
+    RelDataTypeField inputField = nativeScanRel.getRowType().getField(colName, false, false);
+    RexInputRef inputRef = rb.makeInputRef(inputField.getType(), inputField.getIndex());
 
-    if (outputType.getSqlTypeName() == SqlTypeName.TIMESTAMP) {
-      // TIMESTAMP is stored as INT96 by Hive in ParquetFormat. Use convert_fromTIMESTAMP_IMPALA UDF to convert
-      // INT96 format data to TIMESTAMP
-      // TODO: Remove this conversion once "store.parquet.reader.int96_as_timestamp" will be true by default
+    PlannerSettings settings = PrelUtil.getPlannerSettings(hiveScanRel.getCluster().getPlanner());
+    boolean conversionToTimestampEnabled = settings.getOptions().getBoolean(ExecConstants.PARQUET_READER_INT96_AS_TIMESTAMP);
+
+    if (outputType.getSqlTypeName() == SqlTypeName.TIMESTAMP && !conversionToTimestampEnabled) {
+      // TIMESTAMP is stored as INT96 by Hive in ParquetFormat.
+      // Used convert_fromTIMESTAMP_IMPALA UDF to convert INT96 format data to TIMESTAMP
+      // only for the case when `store.parquet.reader.int96_as_timestamp` is
+      // disabled to avoid double conversion after reading value from parquet and here.
       return rb.makeCall(INT96_TO_TIMESTAMP, inputRef);
     }
 

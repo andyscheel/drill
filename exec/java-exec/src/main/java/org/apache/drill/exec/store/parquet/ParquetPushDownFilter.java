@@ -17,9 +17,10 @@
  */
 package org.apache.drill.exec.store.parquet;
 
+import org.apache.calcite.rel.core.Filter;
+import org.apache.drill.exec.physical.base.AbstractGroupScanWithMetadata;
+import org.apache.drill.exec.expr.FilterPredicate;
 import org.apache.drill.shaded.guava.com.google.common.base.Stopwatch;
-import org.apache.drill.shaded.guava.com.google.common.collect.ImmutableList;
-import org.apache.drill.shaded.guava.com.google.common.collect.Lists;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptRuleOperand;
@@ -29,10 +30,7 @@ import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.drill.common.expression.LogicalExpression;
 import org.apache.drill.common.expression.ValueExpressions;
-import org.apache.drill.exec.expr.stat.ParquetFilterPredicate;
-import org.apache.drill.exec.expr.stat.ParquetFilterPredicate.RowsMatch;
 import org.apache.drill.exec.ops.OptimizerRulesContext;
-import org.apache.drill.exec.physical.base.GroupScan;
 import org.apache.drill.exec.planner.common.DrillRelOptUtil;
 import org.apache.drill.exec.planner.logical.DrillOptiq;
 import org.apache.drill.exec.planner.logical.DrillParseContext;
@@ -45,6 +43,7 @@ import org.apache.drill.exec.store.StoragePluginOptimizerRule;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -135,59 +134,114 @@ public abstract class ParquetPushDownFilter extends StoragePluginOptimizerRule {
 
     // get a conjunctions of the filter condition. For each conjunction, if it refers to ITEM or FLATTEN expression
     // then we could not pushed down. Otherwise, it's qualified to be pushed down.
-    final List<RexNode> predList = RelOptUtil.conjunctions(condition);
+    final List<RexNode> predList = RelOptUtil.conjunctions(RexUtil.toCnf(filter.getCluster().getRexBuilder(), condition));
 
-    final List<RexNode> qualifiedPredList = Lists.newArrayList();
+    final List<RexNode> qualifiedPredList = new ArrayList<>();
 
-    for (final RexNode pred : predList) {
-      if (DrillRelOptUtil.findOperators(pred, ImmutableList.of(), BANNED_OPERATORS) == null) {
+    // list of predicates which cannot be converted to parquet filter predicate
+    List<RexNode> nonConvertedPredList = new ArrayList<>();
+
+    for (RexNode pred : predList) {
+      if (DrillRelOptUtil.findOperators(pred, Collections.emptyList(), BANNED_OPERATORS) == null) {
+        LogicalExpression drillPredicate = DrillOptiq.toDrill(
+            new DrillParseContext(PrelUtil.getPlannerSettings(call.getPlanner())), scan, pred);
+
+        // checks whether predicate may be used for filter pushdown
+        FilterPredicate parquetFilterPredicate =
+            groupScan.getFilterPredicate(drillPredicate,
+                optimizerContext,
+                optimizerContext.getFunctionRegistry(), optimizerContext.getPlannerSettings().getOptions(), false);
+        // collects predicates that contain unsupported for filter pushdown expressions
+        // to build filter with them
+        if (parquetFilterPredicate == null) {
+          nonConvertedPredList.add(pred);
+        }
         qualifiedPredList.add(pred);
+      } else {
+        nonConvertedPredList.add(pred);
       }
     }
 
-    final RexNode qualifedPred = RexUtil.composeConjunction(filter.getCluster().getRexBuilder(), qualifiedPredList, true);
+    final RexNode qualifiedPred = RexUtil.composeConjunction(filter.getCluster().getRexBuilder(), qualifiedPredList, true);
 
-    if (qualifedPred == null) {
+    if (qualifiedPred == null) {
       return;
     }
 
     LogicalExpression conditionExp = DrillOptiq.toDrill(
-        new DrillParseContext(PrelUtil.getPlannerSettings(call.getPlanner())), scan, qualifedPred);
+        new DrillParseContext(PrelUtil.getPlannerSettings(call.getPlanner())), scan, qualifiedPred);
 
+    // Default - pass the original filter expr to (potentialy) be used at run-time
+    groupScan.setFilterForRuntime(conditionExp, optimizerContext); // later may remove or set to another filter (see below)
 
     Stopwatch timer = logger.isDebugEnabled() ? Stopwatch.createStarted() : null;
-    final GroupScan newGroupScan = groupScan.applyFilter(conditionExp,optimizerContext,
+    AbstractGroupScanWithMetadata newGroupScan = groupScan.applyFilter(conditionExp, optimizerContext,
         optimizerContext.getFunctionRegistry(), optimizerContext.getPlannerSettings().getOptions());
     if (timer != null) {
       logger.debug("Took {} ms to apply filter on parquet row groups. ", timer.elapsed(TimeUnit.MILLISECONDS));
       timer.stop();
     }
 
-    if (newGroupScan == null ) {
+    // For the case when newGroupScan wasn't created, the old one may
+    // fully match the filter for the case when row group pruning did not happen.
+    if (newGroupScan == null) {
+      if (groupScan.isMatchAllMetadata()) {
+        RelNode child = project == null ? scan : project;
+        // If current row group fully matches filter,
+        // but row group pruning did not happen, remove the filter.
+        if (nonConvertedPredList.isEmpty()) {
+          groupScan.setFilterForRuntime(null, optimizerContext); // disable the original filter expr (i.e. don't use it at run-time)
+          call.transformTo(child);
+        } else if (nonConvertedPredList.size() == predList.size()) {
+          // None of the predicates participated in filter pushdown.
+          return;
+        } else {
+          // If some of the predicates weren't used in the filter, creates new filter with them
+          // on top of current scan. Excludes the case when all predicates weren't used in the filter.
+          Filter theNewFilter  = filter.copy(filter.getTraitSet(), child,
+            RexUtil.composeConjunction(
+              filter.getCluster().getRexBuilder(),
+              nonConvertedPredList,
+              true));
+
+          LogicalExpression filterPredicate = DrillOptiq.toDrill(
+            new DrillParseContext(PrelUtil.getPlannerSettings(call.getPlanner())), scan, theNewFilter.getCondition());
+
+          groupScan.setFilterForRuntime(filterPredicate, optimizerContext); // pass the new filter expr to (potentialy) be used at run-time
+
+          call.transformTo(theNewFilter); // Replace the child with the new filter on top of the child/scan
+        }
+      }
       return;
     }
 
-    RelNode newScan = new ScanPrel(scan.getCluster(), scan.getTraitSet(), newGroupScan, scan.getRowType(), scan.getTable());
+    RelNode newNode = new ScanPrel(scan.getCluster(), scan.getTraitSet(), newGroupScan, scan.getRowType(), scan.getTable());
 
     if (project != null) {
-      newScan = project.copy(project.getTraitSet(), ImmutableList.of(newScan));
+      newNode = project.copy(project.getTraitSet(), Collections.singletonList(newNode));
     }
 
-    if (newGroupScan instanceof AbstractParquetGroupScan) {
-      RowsMatch matchAll = RowsMatch.ALL;
-      List<RowGroupInfo> rowGroupInfos = ((AbstractParquetGroupScan) newGroupScan).rowGroupInfos;
-      for (RowGroupInfo rowGroup : rowGroupInfos) {
-        if (rowGroup.getRowsMatch() != RowsMatch.ALL) {
-          matchAll = RowsMatch.SOME;
-          break;
-        }
+    if (newGroupScan.isMatchAllMetadata()) {
+      // creates filter from the expressions which can't be pushed to the scan
+      if (!nonConvertedPredList.isEmpty()) {
+        Filter theFilterRel  = filter.copy(filter.getTraitSet(), newNode,
+          RexUtil.composeConjunction(
+            filter.getCluster().getRexBuilder(),
+            nonConvertedPredList,
+            true));
+
+        LogicalExpression filterPredicate = DrillOptiq.toDrill(
+          new DrillParseContext(PrelUtil.getPlannerSettings(call.getPlanner())), scan, theFilterRel.getCondition());
+
+        newGroupScan.setFilterForRuntime(filterPredicate, optimizerContext); // pass the new filter expr to (potentialy) be used at run-time
+
+        newNode = theFilterRel; // replace the new node with the new filter on top of that new node
       }
-      if (matchAll == ParquetFilterPredicate.RowsMatch.ALL) {
-        call.transformTo(newScan);
-      }
+      call.transformTo(newNode);
+      return;
     }
 
-    final RelNode newFilter = filter.copy(filter.getTraitSet(), ImmutableList.<RelNode>of(newScan));
+    final RelNode newFilter = filter.copy(filter.getTraitSet(), Collections.singletonList(newNode));
     call.transformTo(newFilter);
   }
 }

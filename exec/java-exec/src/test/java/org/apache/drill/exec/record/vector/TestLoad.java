@@ -36,9 +36,10 @@ import org.apache.drill.exec.record.BatchSchema;
 import org.apache.drill.exec.record.MaterializedField;
 import org.apache.drill.exec.record.RecordBatchLoader;
 import org.apache.drill.exec.record.WritableBatch;
+import org.apache.drill.exec.record.BatchSchemaBuilder;
+import org.apache.drill.exec.record.metadata.SchemaBuilder;
 import org.apache.drill.exec.vector.AllocationHelper;
 import org.apache.drill.exec.vector.ValueVector;
-import org.apache.drill.test.rowSet.schema.SchemaBuilder;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
@@ -49,14 +50,15 @@ import io.netty.buffer.DrillBuf;
 public class TestLoad extends ExecTest {
   private final DrillConfig drillConfig = DrillConfig.create();
 
-  @SuppressWarnings("resource")
   @Test
   public void testLoadValueVector() throws Exception {
     final BufferAllocator allocator = RootAllocatorFactory.newRoot(drillConfig);
-    BatchSchema schema = new SchemaBuilder()
+    SchemaBuilder schemaBuilder = new SchemaBuilder()
         .add("ints", MinorType.INT)
         .add("chars", MinorType.VARCHAR)
-        .addNullable("chars2", MinorType.VARCHAR)
+        .addNullable("chars2", MinorType.VARCHAR);
+    BatchSchema schema = new BatchSchemaBuilder()
+        .withSchemaBuilder(schemaBuilder)
         .build();
 
     // Create vectors
@@ -103,7 +105,6 @@ public class TestLoad extends ExecTest {
   private static List<ValueVector> createVectors(BufferAllocator allocator, BatchSchema schema, int i) {
     final List<ValueVector> vectors = new ArrayList<>();
     for (MaterializedField field : schema) {
-      @SuppressWarnings("resource")
       ValueVector v = TypeHelper.getNewVector(field, allocator);
       AllocationHelper.allocate(v, 100, 50);
       v.getMutator().generateTestData(100);
@@ -139,7 +140,6 @@ public class TestLoad extends ExecTest {
    * @throws SchemaChangeException should not occur
    */
 
-  @SuppressWarnings("resource")
   private boolean loadBatch(BufferAllocator allocator,
       final RecordBatchLoader batchLoader,
       BatchSchema schema) throws SchemaChangeException {
@@ -160,9 +160,11 @@ public class TestLoad extends ExecTest {
     // Initial schema: a: INT, b: VARCHAR
     // Schema change: N/A
 
-    BatchSchema schema1 = new SchemaBuilder()
+    SchemaBuilder schemaBuilder1 = new SchemaBuilder()
         .add("a", MinorType.INT)
-        .add("b", MinorType.VARCHAR)
+        .add("b", MinorType.VARCHAR);
+    BatchSchema schema1 = new BatchSchemaBuilder()
+        .withSchemaBuilder(schemaBuilder1)
         .build();
     {
       assertTrue(loadBatch(allocator, batchLoader, schema1));
@@ -183,9 +185,11 @@ public class TestLoad extends ExecTest {
     // Schema change: No
 
     {
-      BatchSchema schema = new SchemaBuilder()
+      SchemaBuilder schemaBuilder = new SchemaBuilder()
           .add("b", MinorType.VARCHAR)
-          .add("a", MinorType.INT)
+          .add("a", MinorType.INT);
+      BatchSchema schema = new BatchSchemaBuilder()
+          .withSchemaBuilder(schemaBuilder)
           .build();
       assertFalse(loadBatch(allocator, batchLoader, schema));
 
@@ -199,8 +203,10 @@ public class TestLoad extends ExecTest {
     // Schema change: Yes
 
     {
-      BatchSchema schema = new SchemaBuilder()
-          .add("a", MinorType.INT)
+      SchemaBuilder schemaBuilder = new SchemaBuilder()
+          .add("a", MinorType.INT);
+      BatchSchema schema = new BatchSchemaBuilder()
+          .withSchemaBuilder(schemaBuilder)
           .build();
       assertTrue(loadBatch(allocator, batchLoader, schema));
       assertTrue(schema.isEquivalent(batchLoader.getSchema()));
@@ -215,10 +221,12 @@ public class TestLoad extends ExecTest {
       assertTrue(schema1.isEquivalent(batchLoader.getSchema()));
       batchLoader.getContainer().zeroVectors();
 
-      BatchSchema schema = new SchemaBuilder()
+      SchemaBuilder schemaBuilder = new SchemaBuilder()
           .add("a", MinorType.INT)
           .add("b", MinorType.VARCHAR)
-          .add("c", MinorType.INT)
+          .add("c", MinorType.INT);
+      BatchSchema schema = new BatchSchemaBuilder()
+          .withSchemaBuilder(schemaBuilder)
           .build();
       assertTrue(loadBatch(allocator, batchLoader, schema));
       assertTrue(schema.isEquivalent(batchLoader.getSchema()));
@@ -229,10 +237,12 @@ public class TestLoad extends ExecTest {
     // Schema change: Yes
 
     {
-      BatchSchema schema = new SchemaBuilder()
+      SchemaBuilder schemaBuilder = new SchemaBuilder()
           .add("a", MinorType.INT)
           .add("b", MinorType.VARCHAR)
-          .add("c", MinorType.VARCHAR)
+          .add("c", MinorType.VARCHAR);
+      BatchSchema schema = new BatchSchemaBuilder()
+          .withSchemaBuilder(schemaBuilder)
           .build();
       assertTrue(loadBatch(allocator, batchLoader, schema));
       assertTrue(schema.isEquivalent(batchLoader.getSchema()));
@@ -243,7 +253,8 @@ public class TestLoad extends ExecTest {
     // Schema change: Yes
 
     {
-      BatchSchema schema = new SchemaBuilder()
+      BatchSchema schema = new BatchSchemaBuilder()
+          .withSchemaBuilder(new SchemaBuilder())
           .build();
       assertTrue(loadBatch(allocator, batchLoader, schema));
       assertTrue(schema.isEquivalent(batchLoader.getSchema()));
@@ -261,10 +272,12 @@ public class TestLoad extends ExecTest {
 
     // Initial schema: a: INT, m: MAP{}
 
-    BatchSchema schema1 = new SchemaBuilder()
+    SchemaBuilder schemaBuilder1 = new SchemaBuilder()
         .add("a", MinorType.INT)
         .addMap("m")
-          .resumeSchema()
+          .resumeSchema();
+    BatchSchema schema1 = new BatchSchemaBuilder()
+        .withSchemaBuilder(schemaBuilder1)
         .build();
     {
       assertTrue(loadBatch(allocator, batchLoader, schema1));
@@ -284,11 +297,13 @@ public class TestLoad extends ExecTest {
     // Add column to map: a: INT, m: MAP{b: VARCHAR}
     // Schema change: Yes
 
-    BatchSchema schema2 = new SchemaBuilder()
+    SchemaBuilder schemaBuilder2 = new SchemaBuilder()
         .add("a", MinorType.INT)
         .addMap("m")
           .add("b", MinorType.VARCHAR)
-          .resumeSchema()
+          .resumeSchema();
+    BatchSchema schema2 = new BatchSchemaBuilder()
+        .withSchemaBuilder(schemaBuilder2)
         .build();
     {
       assertTrue(loadBatch(allocator, batchLoader, schema2));
@@ -309,12 +324,14 @@ public class TestLoad extends ExecTest {
     // Schema change: Yes
 
     {
-      BatchSchema schema = new SchemaBuilder()
+      SchemaBuilder schemaBuilder = new SchemaBuilder()
           .add("a", MinorType.INT)
           .addMap("m")
             .add("b", MinorType.VARCHAR)
             .add("c", MinorType.INT)
-            .resumeSchema()
+            .resumeSchema();
+      BatchSchema schema = new BatchSchemaBuilder()
+          .withSchemaBuilder(schemaBuilder)
           .build();
       assertTrue(loadBatch(allocator, batchLoader, schema));
       assertTrue(schema.isEquivalent(batchLoader.getSchema()));
@@ -325,11 +342,13 @@ public class TestLoad extends ExecTest {
     // Schema change: Yes
 
     {
-      BatchSchema schema = new SchemaBuilder()
+      SchemaBuilder schemaBuilder = new SchemaBuilder()
           .add("a", MinorType.INT)
           .addMap("m")
             .add("b", MinorType.VARCHAR)
-            .resumeSchema()
+            .resumeSchema();
+      BatchSchema schema = new BatchSchemaBuilder()
+          .withSchemaBuilder(schemaBuilder)
           .build();
       assertTrue(loadBatch(allocator, batchLoader, schema));
       assertTrue(schema.isEquivalent(batchLoader.getSchema()));
@@ -340,11 +359,13 @@ public class TestLoad extends ExecTest {
     // Schema change: Yes
 
     {
-      BatchSchema schema = new SchemaBuilder()
+      SchemaBuilder schemaBuilder = new SchemaBuilder()
           .add("a", MinorType.INT)
           .addMap("m")
             .add("b", MinorType.INT)
-            .resumeSchema()
+            .resumeSchema();
+      BatchSchema schema = new BatchSchemaBuilder()
+          .withSchemaBuilder(schemaBuilder)
           .build();
       assertTrue(loadBatch(allocator, batchLoader, schema));
       assertTrue(schema.isEquivalent(batchLoader.getSchema()));
@@ -362,8 +383,10 @@ public class TestLoad extends ExecTest {
     // Drop map: a: INT
 
     {
-      BatchSchema schema = new SchemaBuilder()
-          .add("a", MinorType.INT)
+      SchemaBuilder schemaBuilder = new SchemaBuilder()
+          .add("a", MinorType.INT);
+      BatchSchema schema = new BatchSchemaBuilder()
+          .withSchemaBuilder(schemaBuilder)
           .build();
       assertTrue(loadBatch(allocator, batchLoader, schema));
       assertTrue(schema.isEquivalent(batchLoader.getSchema()));

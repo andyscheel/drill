@@ -18,7 +18,6 @@
 package org.apache.drill.exec.planner.sql.handlers;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -26,6 +25,7 @@ import java.util.concurrent.TimeUnit;
 import com.fasterxml.jackson.databind.ser.PropertyFilter;
 import com.fasterxml.jackson.databind.ser.impl.SimpleBeanPropertyFilter;
 import com.fasterxml.jackson.databind.ser.impl.SimpleFilterProvider;
+import org.apache.drill.exec.util.Utilities;
 import org.apache.drill.shaded.guava.com.google.common.collect.ImmutableList;
 import org.apache.drill.shaded.guava.com.google.common.collect.Sets;
 import org.apache.calcite.plan.RelOptCostImpl;
@@ -45,7 +45,6 @@ import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.logical.LogicalValues;
 import org.apache.calcite.rel.metadata.JaninoRelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
-import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexNode;
@@ -74,7 +73,6 @@ import org.apache.drill.exec.physical.impl.join.JoinUtils;
 import org.apache.drill.exec.planner.PlannerPhase;
 import org.apache.drill.exec.planner.PlannerType;
 import org.apache.drill.exec.planner.common.DrillRelOptUtil;
-import org.apache.drill.exec.planner.cost.DrillDefaultRelMetadataProvider;
 import org.apache.drill.exec.planner.logical.DrillProjectRel;
 import org.apache.drill.exec.planner.logical.DrillRel;
 import org.apache.drill.exec.planner.logical.DrillRelFactories;
@@ -106,7 +104,6 @@ import org.apache.drill.exec.server.options.OptionManager;
 import org.apache.drill.exec.util.Pointer;
 import org.apache.drill.exec.work.foreman.ForemanSetupException;
 import org.apache.drill.exec.work.foreman.SqlUnsupportedException;
-import org.apache.drill.exec.work.foreman.UnsupportedRelOperatorException;
 import org.slf4j.Logger;
 
 import org.apache.drill.shaded.guava.com.google.common.base.Preconditions;
@@ -232,7 +229,6 @@ public class DefaultSqlHandler extends AbstractSqlHandler {
     }
 
     try {
-
       // HEP for rules, which are failed at the LOGICAL_PLANNING stage for Volcano planner
       final RelNode setOpTransposeNode = transform(PlannerType.HEP, PlannerPhase.PRE_LOGICAL_PLANNING, relNode);
 
@@ -247,6 +243,7 @@ public class DefaultSqlHandler extends AbstractSqlHandler {
 
       } else {
         final RelNode intermediateNode2;
+        final RelNode intermediateNode3;
         if (context.getPlannerSettings().isHepPartitionPruningEnabled()) {
 
           final RelNode intermediateNode = transform(PlannerType.VOLCANO, PlannerPhase.LOGICAL, pruned, logicalTraits);
@@ -268,7 +265,14 @@ public class DefaultSqlHandler extends AbstractSqlHandler {
         }
 
         // Do Join Planning.
-        convertedRelNode = transform(PlannerType.HEP_BOTTOM_UP, PlannerPhase.JOIN_PLANNING, intermediateNode2);
+        intermediateNode3 = transform(PlannerType.HEP_BOTTOM_UP, PlannerPhase.JOIN_PLANNING, intermediateNode2);
+
+        if (context.getPlannerSettings().isRowKeyJoinConversionEnabled()) {
+          // Covert Join to RowKeyJoin, where applicable.
+          convertedRelNode = transform(PlannerType.HEP_BOTTOM_UP, PlannerPhase.ROWKEYJOIN_CONVERSION, intermediateNode3);
+        } else {
+          convertedRelNode = intermediateNode3;
+        }
       }
 
       // Convert SUM to $SUM0
@@ -294,8 +298,8 @@ public class DefaultSqlHandler extends AbstractSqlHandler {
     } catch (RelOptPlanner.CannotPlanException ex) {
       logger.error(ex.getMessage());
 
-      if (JoinUtils.checkCartesianJoin(relNode, new ArrayList<>(), new ArrayList<>(), new ArrayList<>())) {
-        throw new UnsupportedRelOperatorException("This query cannot be planned possibly due to either a cartesian join or an inequality join");
+      if (JoinUtils.checkCartesianJoin(relNode)) {
+        throw JoinUtils.cartesianJoinPlanningException();
       } else {
         throw ex;
       }
@@ -402,8 +406,7 @@ public class DefaultSqlHandler extends AbstractSqlHandler {
       final HepPlanner planner = new HepPlanner(hepPgmBldr.build(), context.getPlannerSettings(), true, null,
           RelOptCostImpl.FACTORY);
 
-      JaninoRelMetadataProvider relMetadataProvider = JaninoRelMetadataProvider.of(DrillDefaultRelMetadataProvider.INSTANCE);
-      RelMetadataQuery.THREAD_PROVIDERS.set(relMetadataProvider);
+      JaninoRelMetadataProvider relMetadataProvider = Utilities.registerJaninoRelMetadataProvider();
 
       // Modify RelMetaProvider for every RelNode in the SQL operator Rel tree.
       input.accept(new MetaDataProviderModifier(relMetadataProvider));
@@ -459,8 +462,8 @@ public class DefaultSqlHandler extends AbstractSqlHandler {
     } catch (RelOptPlanner.CannotPlanException ex) {
       logger.error(ex.getMessage());
 
-      if (JoinUtils.checkCartesianJoin(drel, new ArrayList<>(), new ArrayList<>(), new ArrayList<>())) {
-        throw new UnsupportedRelOperatorException("This query cannot be planned possibly due to either a cartesian join or an inequality join");
+      if (JoinUtils.checkCartesianJoin(drel)) {
+        throw JoinUtils.cartesianJoinPlanningException();
       } else {
         throw ex;
       }
@@ -482,8 +485,8 @@ public class DefaultSqlHandler extends AbstractSqlHandler {
       } catch (RelOptPlanner.CannotPlanException ex) {
         logger.error(ex.getMessage());
 
-        if (JoinUtils.checkCartesianJoin(drel, new ArrayList<>(), new ArrayList<>(), new ArrayList<>())) {
-          throw new UnsupportedRelOperatorException("This query cannot be planned possibly due to either a cartesian join or an inequality join");
+        if (JoinUtils.checkCartesianJoin(drel)) {
+          throw JoinUtils.cartesianJoinPlanningException();
         } else {
           throw ex;
         }
@@ -555,7 +558,7 @@ public class DefaultSqlHandler extends AbstractSqlHandler {
     /*
      * 4.)
      * If two fragments are both estimated to be parallelization one, remove the exchange
-     * separating them
+     * separating them.
      */
     phyRelNode = ExcessiveExchangeIdentifier.removeExcessiveEchanges(phyRelNode, targetSliceSize);
 

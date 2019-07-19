@@ -17,6 +17,7 @@
  */
 package org.apache.drill.exec.planner.sql;
 
+import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.drill.shaded.guava.com.google.common.collect.ImmutableMap;
 import org.apache.drill.shaded.guava.com.google.common.collect.ImmutableSet;
 import org.apache.drill.shaded.guava.com.google.common.collect.Lists;
@@ -140,6 +141,7 @@ public class TypeInferenceUtils {
 
   private static final ImmutableMap<String, SqlReturnTypeInference> funcNameToInference = ImmutableMap.<String, SqlReturnTypeInference> builder()
       .put("DATE_PART", DrillDatePartSqlReturnTypeInference.INSTANCE)
+      .put(SqlStdOperatorTable.TIMESTAMP_ADD.getName(), DrillTimestampAddTypeInference.INSTANCE)
       .put(SqlKind.SUM.name(), DrillSumSqlReturnTypeInference.INSTANCE)
       .put(SqlKind.COUNT.name(), DrillCountSqlReturnTypeInference.INSTANCE)
       .put("CONCAT", DrillConcatSqlReturnTypeInference.INSTANCE_CONCAT)
@@ -221,6 +223,39 @@ public class TypeInferenceUtils {
   public static TypeProtos.MinorType getDrillTypeFromCalciteType(final RelDataType relDataType) {
     final SqlTypeName sqlTypeName = relDataType.getSqlTypeName();
     return getDrillTypeFromCalciteType(sqlTypeName);
+  }
+
+  /**
+   * Returns {@link TypeProtos.MajorType} instance which corresponds to specified {@code RelDataType relDataType}
+   * with its nullability, scale and precision if it is available.
+   *
+   * @param relDataType RelDataType to convert
+   * @return {@link TypeProtos.MajorType} instance
+   */
+  public static TypeProtos.MajorType getDrillMajorTypeFromCalciteType(RelDataType relDataType) {
+    final SqlTypeName sqlTypeName = relDataType.getSqlTypeName();
+
+    TypeProtos.MinorType minorType = getDrillTypeFromCalciteType(sqlTypeName);
+    TypeProtos.MajorType.Builder typeBuilder = TypeProtos.MajorType.newBuilder().setMinorType(minorType);
+    switch (minorType) {
+      case VAR16CHAR:
+      case VARCHAR:
+      case VARBINARY:
+      case TIMESTAMP:
+        if (relDataType.getPrecision() > 0) {
+          typeBuilder.setPrecision(relDataType.getPrecision());
+        }
+        break;
+      case VARDECIMAL:
+        typeBuilder.setPrecision(relDataType.getPrecision());
+        typeBuilder.setScale(relDataType.getScale());
+    }
+    if (relDataType.isNullable()) {
+      typeBuilder.setMode(TypeProtos.DataMode.OPTIONAL);
+    } else {
+      typeBuilder.setMode(TypeProtos.DataMode.REQUIRED);
+    }
+    return typeBuilder.build();
   }
 
   /**
@@ -555,6 +590,64 @@ public class TypeInferenceUtils {
     }
   }
 
+  private static class DrillTimestampAddTypeInference implements SqlReturnTypeInference {
+    private static final SqlReturnTypeInference INSTANCE = new DrillTimestampAddTypeInference();
+
+    @Override
+    public RelDataType inferReturnType(SqlOperatorBinding opBinding) {
+      RelDataTypeFactory factory = opBinding.getTypeFactory();
+      // operands count ond order is checked at parsing stage
+      RelDataType inputType = opBinding.getOperandType(2);
+      boolean isNullable = inputType.isNullable() || opBinding.getOperandType(1).isNullable();
+
+      SqlTypeName inputTypeName = inputType.getSqlTypeName();
+
+      TimeUnit qualifier = ((SqlLiteral) ((SqlCallBinding) opBinding).operand(0)).getValueAs(TimeUnit.class);
+
+      SqlTypeName sqlTypeName;
+
+      // follow up with type inference of reduced expression
+      switch (qualifier) {
+        case DAY:
+        case WEEK:
+        case MONTH:
+        case QUARTER:
+        case YEAR:
+        case NANOSECOND:  // NANOSECOND is not supported by Calcite SqlTimestampAddFunction.
+                          // Once it is fixed, NANOSECOND should be moved to the group below.
+          sqlTypeName = inputTypeName;
+          break;
+        case MICROSECOND:
+        case MILLISECOND:
+          // precision should be specified for MICROSECOND and MILLISECOND
+          return factory.createTypeWithNullability(
+              factory.createSqlType(SqlTypeName.TIMESTAMP, 3),
+              isNullable);
+        case SECOND:
+        case MINUTE:
+        case HOUR:
+          if (inputTypeName == SqlTypeName.TIME) {
+            sqlTypeName = SqlTypeName.TIME;
+          } else {
+            sqlTypeName = SqlTypeName.TIMESTAMP;
+          }
+          break;
+        default:
+          sqlTypeName = SqlTypeName.ANY;
+      }
+
+      // preserves precision of input type if it was specified
+      if (inputType.getSqlTypeName().allowsPrecNoScale()) {
+        RelDataType type = factory.createSqlType(sqlTypeName, inputType.getPrecision());
+        return factory.createTypeWithNullability(type, isNullable);
+      }
+      return createCalciteTypeWithNullability(
+          opBinding.getTypeFactory(),
+          sqlTypeName,
+          isNullable);
+    }
+  }
+
   private static class DrillSubstringSqlReturnTypeInference implements SqlReturnTypeInference {
     private static final DrillSubstringSqlReturnTypeInference INSTANCE = new DrillSubstringSqlReturnTypeInference();
 
@@ -823,15 +916,16 @@ public class TypeInferenceUtils {
   /**
    * For Extract and date_part functions, infer the return types based on timeUnit
    */
-  public static SqlTypeName getSqlTypeNameForTimeUnit(String timeUnit) {
-    switch (timeUnit.toUpperCase()){
-      case "YEAR":
-      case "MONTH":
-      case "DAY":
-      case "HOUR":
-      case "MINUTE":
+  public static SqlTypeName getSqlTypeNameForTimeUnit(String timeUnitStr) {
+    TimeUnit timeUnit = TimeUnit.valueOf(timeUnitStr);
+    switch (timeUnit) {
+      case YEAR:
+      case MONTH:
+      case DAY:
+      case HOUR:
+      case MINUTE:
         return SqlTypeName.BIGINT;
-      case "SECOND":
+      case SECOND:
         return SqlTypeName.DOUBLE;
       default:
         throw UserException

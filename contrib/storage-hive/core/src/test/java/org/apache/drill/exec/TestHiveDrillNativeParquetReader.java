@@ -21,6 +21,8 @@ import static org.hamcrest.CoreMatchers.containsString;
 import static org.junit.Assert.assertEquals;
 
 import java.math.BigDecimal;
+import java.util.HashMap;
+import java.util.Map;
 
 import org.apache.drill.PlanTestBase;
 import org.apache.drill.categories.HiveStorageTest;
@@ -260,4 +262,61 @@ public class TestHiveDrillNativeParquetReader extends HiveTestBase {
     }
   }
 
+  @Test
+  public void testHiveVarcharPushDown() throws Exception {
+    String query = "select int_key from hive.kv_native where var_key = 'var_1'";
+
+    Map<String, String> properties = new HashMap<>();
+    properties.put("true", "numRowGroups=1");
+    properties.put("false", "numRowGroups=4"); // Hive creates parquet files using Parquet lib older than 1.10.0
+    try {
+      for (Map.Entry<String, String> property : properties.entrySet()) {
+        alterSession(ExecConstants.PARQUET_READER_STRINGS_SIGNED_MIN_MAX, property.getKey());
+        testPlanMatchingPatterns(query, new String[]{"HiveDrillNativeParquetScan", property.getValue()});
+
+        testBuilder()
+          .sqlQuery(query)
+          .unOrdered()
+          .baselineColumns("int_key")
+          .baselineValues(1)
+          .go();
+      }
+    } finally {
+      resetSessionOption(ExecConstants.PARQUET_READER_STRINGS_SIGNED_MIN_MAX);
+    }
+  }
+
+  @Test
+  public void testHiveDecimalPushDown() throws Exception {
+    String query = "select int_key from hive.kv_native where dec_key = cast(1.11 as decimal(5, 2))";
+    // Hive generates parquet files using parquet lib older than 1.10.0
+    // thus statistics for decimal is not available
+    testPlanMatchingPatterns(query, new String[]{"HiveDrillNativeParquetScan", "numRowGroups=4"});
+
+    testBuilder()
+      .sqlQuery(query)
+      .unOrdered()
+      .baselineColumns("int_key")
+      .baselineValues(1)
+      .go();
+  }
+
+  @Test
+  public void testInt96TimestampConversionWithNativeReader() throws Exception {
+    String query = "select timestamp_field from hive.readtest_parquet";
+
+    try {
+      setSessionOption(ExecConstants.PARQUET_READER_INT96_AS_TIMESTAMP, true);
+
+      testBuilder()
+          .sqlQuery(query)
+          .unOrdered()
+          .baselineColumns("timestamp_field")
+          .baselineValues(DateUtility.parseBest("2013-07-05 17:01:00"))
+          .baselineValues(new Object[]{null})
+          .go();
+    } finally {
+      resetSessionOption(ExecConstants.PARQUET_READER_INT96_AS_TIMESTAMP);
+    }
+  }
 }

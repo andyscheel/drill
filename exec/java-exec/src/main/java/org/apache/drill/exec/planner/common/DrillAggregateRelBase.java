@@ -34,15 +34,14 @@ import org.apache.drill.exec.planner.physical.PrelUtil;
 
 import java.util.List;
 
-
 /**
  * Base class for logical and physical Aggregations implemented in Drill
  */
 public abstract class DrillAggregateRelBase extends Aggregate implements DrillRelNode {
 
-  public DrillAggregateRelBase(RelOptCluster cluster, RelTraitSet traits, RelNode child, boolean indicator,
-      ImmutableBitSet groupSet, List<ImmutableBitSet> groupSets, List<AggregateCall> aggCalls) {
-    super(cluster, traits, child, indicator, groupSet, groupSets, aggCalls);
+  public DrillAggregateRelBase(RelOptCluster cluster, RelTraitSet traits, RelNode child,
+                               ImmutableBitSet groupSet, List<ImmutableBitSet> groupSets, List<AggregateCall> aggCalls) {
+    super(cluster, traits, child, groupSet, groupSets, aggCalls);
   }
 
   /**
@@ -88,4 +87,13 @@ public abstract class DrillAggregateRelBase extends Aggregate implements DrillRe
     return computeHashAggCost(planner, mq);
   }
 
+  @Override
+  public double estimateRowCount(RelMetadataQuery mq) {
+    // Get the number of distinct group-by key values present in the input
+    if (!DrillRelOptUtil.guessRows(this)) {
+      return mq.getRowCount(this);
+    } else {
+      return super.estimateRowCount(mq);
+    }
+  }
 }

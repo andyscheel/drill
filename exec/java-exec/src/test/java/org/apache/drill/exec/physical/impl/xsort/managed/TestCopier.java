@@ -28,17 +28,17 @@ import org.apache.drill.common.logical.data.Order.Ordering;
 import org.apache.drill.common.types.TypeProtos.MinorType;
 import org.apache.drill.exec.ops.OperatorContext;
 import org.apache.drill.exec.physical.config.Sort;
-import org.apache.drill.exec.physical.impl.xsort.managed.PriorityQueueCopierWrapper.BatchMerger;
 import org.apache.drill.exec.physical.impl.xsort.managed.SortTestUtilities.CopierTester;
 import org.apache.drill.exec.record.BatchSchema;
 import org.apache.drill.exec.record.VectorContainer;
+import org.apache.drill.exec.record.metadata.SchemaBuilder;
+import org.apache.drill.exec.record.metadata.TupleMetadata;
 import org.apache.drill.test.OperatorFixture;
 import org.apache.drill.test.SubOperatorTest;
 import org.apache.drill.test.rowSet.RowSet.ExtendableRowSet;
 import org.apache.drill.test.rowSet.RowSet.SingleRowSet;
 import org.apache.drill.test.rowSet.RowSetUtilities;
 import org.apache.drill.test.rowSet.RowSetWriter;
-import org.apache.drill.test.rowSet.schema.SchemaBuilder;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
@@ -56,7 +56,7 @@ public class TestCopier extends SubOperatorTest {
 
   @Test
   public void testEmptyInput() {
-    BatchSchema schema = SortTestUtilities.nonNullSchema();
+    TupleMetadata schema = SortTestUtilities.nonNullSchema();
     List<BatchGroup> batches = new ArrayList<>();
     Sort popConfig = SortTestUtilities.makeCopierConfig(Ordering.ORDER_ASC, Ordering.NULLS_UNSPECIFIED);
     OperatorContext opContext = fixture.newOperatorContext(popConfig);
@@ -68,8 +68,8 @@ public class TestCopier extends SubOperatorTest {
       // code. Only nuisance is that we don't have the required metadata
       // readily at hand here...
 
-      @SuppressWarnings({"resource", "unused"})
-      BatchMerger merger = copier.startMerge(schema, batches, dest, 10, null);
+      copier.startMerge(new BatchSchema(BatchSchema.SelectionVectorMode.NONE, schema.toFieldList()),
+          batches, dest, 10, null);
       fail();
     } catch (AssertionError e) {
       // Expected
@@ -80,7 +80,7 @@ public class TestCopier extends SubOperatorTest {
 
   @Test
   public void testEmptyBatch() throws Exception {
-    BatchSchema schema = SortTestUtilities.nonNullSchema();
+    TupleMetadata schema = SortTestUtilities.nonNullSchema();
     CopierTester tester = new CopierTester(fixture);
     tester.addInput(fixture.rowSetBuilder(schema)
           .withSv2()
@@ -91,7 +91,7 @@ public class TestCopier extends SubOperatorTest {
 
   @Test
   public void testSingleRow() throws Exception {
-    BatchSchema schema = SortTestUtilities.nonNullSchema();
+    TupleMetadata schema = SortTestUtilities.nonNullSchema();
     CopierTester tester = new CopierTester(fixture);
     tester.addInput(fixture.rowSetBuilder(schema)
           .addRow(10, "10")
@@ -106,7 +106,7 @@ public class TestCopier extends SubOperatorTest {
 
   @Test
   public void testTwoBatchesSingleRow() throws Exception {
-    BatchSchema schema = SortTestUtilities.nonNullSchema();
+    TupleMetadata schema = SortTestUtilities.nonNullSchema();
     CopierTester tester = new CopierTester(fixture);
     tester.addInput(fixture.rowSetBuilder(schema)
           .addRow(10, "10")
@@ -124,7 +124,7 @@ public class TestCopier extends SubOperatorTest {
     tester.run();
   }
 
-  public static SingleRowSet makeDataSet(BatchSchema schema, int first, int step, int count) {
+  public static SingleRowSet makeDataSet(TupleMetadata schema, int first, int step, int count) {
     ExtendableRowSet rowSet = fixture.rowSet(schema);
     RowSetWriter writer = rowSet.writer(count);
     int value = first;
@@ -139,7 +139,7 @@ public class TestCopier extends SubOperatorTest {
 
   @Test
   public void testMultipleOutput() throws Exception {
-    BatchSchema schema = SortTestUtilities.nonNullSchema();
+    TupleMetadata schema = SortTestUtilities.nonNullSchema();
 
     CopierTester tester = new CopierTester(fixture);
     tester.addInput(makeDataSet(schema, 0, 2, 10).toIndirect());
@@ -154,7 +154,7 @@ public class TestCopier extends SubOperatorTest {
 
   @Test
   public void testMultipleOutputDesc() throws Exception {
-    BatchSchema schema = SortTestUtilities.nonNullSchema();
+    TupleMetadata schema = SortTestUtilities.nonNullSchema();
 
     CopierTester tester = new CopierTester(fixture);
     tester.sortOrder = Ordering.ORDER_DESC;
@@ -175,7 +175,7 @@ public class TestCopier extends SubOperatorTest {
 
   @Test
   public void testAscNullsLast() throws Exception {
-    BatchSchema schema = SortTestUtilities.nullableSchema();
+    TupleMetadata schema = SortTestUtilities.nullableSchema();
 
     CopierTester tester = new CopierTester(fixture);
     tester.sortOrder = Ordering.ORDER_ASC;
@@ -207,7 +207,7 @@ public class TestCopier extends SubOperatorTest {
 
   @Test
   public void testAscNullsFirst() throws Exception {
-    BatchSchema schema = SortTestUtilities.nullableSchema();
+    TupleMetadata schema = SortTestUtilities.nullableSchema();
 
     CopierTester tester = new CopierTester(fixture);
     tester.sortOrder = Ordering.ORDER_ASC;
@@ -239,7 +239,7 @@ public class TestCopier extends SubOperatorTest {
 
   @Test
   public void testDescNullsLast() throws Exception {
-    BatchSchema schema = SortTestUtilities.nullableSchema();
+    TupleMetadata schema = SortTestUtilities.nullableSchema();
 
     CopierTester tester = new CopierTester(fixture);
     tester.sortOrder = Ordering.ORDER_DESC;
@@ -271,7 +271,7 @@ public class TestCopier extends SubOperatorTest {
 
   @Test
   public void testDescNullsFirst() throws Exception {
-    BatchSchema schema = SortTestUtilities.nullableSchema();
+    TupleMetadata schema = SortTestUtilities.nullableSchema();
 
     CopierTester tester = new CopierTester(fixture);
     tester.sortOrder = Ordering.ORDER_DESC;
@@ -302,7 +302,7 @@ public class TestCopier extends SubOperatorTest {
   }
 
   public static void runTypeTest(OperatorFixture fixture, MinorType type) throws Exception {
-    BatchSchema schema = SortTestUtilities.makeSchema(type, false);
+    TupleMetadata schema = SortTestUtilities.makeSchema(type, false);
 
     CopierTester tester = new CopierTester(fixture);
     tester.addInput(makeDataSet(schema, 0, 2, 5).toIndirect());
@@ -342,7 +342,7 @@ public class TestCopier extends SubOperatorTest {
   }
 
   public void testMapType(OperatorFixture fixture) throws Exception {
-    BatchSchema schema = new SchemaBuilder()
+    TupleMetadata schema = new SchemaBuilder()
         .add("key", MinorType.INT)
         .addMap("m1")
           .add("b", MinorType.INT)
@@ -350,7 +350,7 @@ public class TestCopier extends SubOperatorTest {
             .add("c", MinorType.INT)
             .resumeMap()
           .resumeSchema()
-        .build();
+        .buildSchema();
 
     CopierTester tester = new CopierTester(fixture);
     tester.addInput(fixture.rowSetBuilder(schema)

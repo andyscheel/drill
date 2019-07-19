@@ -29,6 +29,9 @@ import org.apache.drill.common.types.Types;
 import org.apache.drill.exec.expr.TypeHelper;
 import org.apache.drill.exec.memory.BufferAllocator;
 import org.apache.drill.exec.ops.OperatorContext;
+import org.apache.drill.exec.record.metadata.MetadataUtils;
+import org.apache.drill.exec.record.metadata.TupleMetadata;
+import org.apache.drill.exec.record.metadata.TupleSchema;
 import org.apache.drill.exec.vector.ValueVector;
 import org.apache.drill.exec.vector.complex.UnionVector;
 
@@ -94,7 +97,6 @@ public class SchemaUtil {
     return s;
   }
 
-  @SuppressWarnings("resource")
   private static  ValueVector coerceVector(ValueVector v, VectorContainer c, MaterializedField field,
                                            int recordCount, BufferAllocator allocator) {
     if (v != null) {
@@ -146,7 +148,6 @@ public class SchemaUtil {
         vectorMap.put(vvs[0].getField().getName(), vvs);
       } else {
         assert !isHyper;
-        @SuppressWarnings("resource")
         final ValueVector v = w.getValueVector();
         vectorMap.put(v.getField().getName(), v);
       }
@@ -169,7 +170,6 @@ public class SchemaUtil {
         }
         c.add(vvsOut);
       } else {
-        @SuppressWarnings("resource")
         final ValueVector v = (ValueVector) vectorMap.remove(field.getName());
         c.add(coerceVector(v, c, field, recordCount, allocator));
       }
@@ -178,5 +178,13 @@ public class SchemaUtil {
     c.setRecordCount(recordCount);
     Preconditions.checkState(vectorMap.size() == 0, "Leftover vector from incoming batch");
     return c;
+  }
+
+  public static TupleMetadata fromBatchSchema(BatchSchema batchSchema) {
+    TupleSchema tuple = new TupleSchema();
+    for (MaterializedField field : batchSchema) {
+      tuple.add(MetadataUtils.fromView(field));
+    }
+    return tuple;
   }
 }

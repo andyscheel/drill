@@ -19,13 +19,17 @@ package org.apache.drill.exec.client;
 
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
-import jline.console.completer.StringsCompleter;
 import org.apache.drill.common.scanner.ClassPathScanner;
 import org.apache.drill.common.util.DrillVersionInfo;
 import org.apache.drill.shaded.guava.com.google.common.annotations.VisibleForTesting;
+import org.jline.reader.impl.completer.StringsCompleter;
+import org.jline.utils.AttributedString;
+import org.jline.utils.AttributedStringBuilder;
 import sqlline.Application;
 import sqlline.CommandHandler;
+import sqlline.ConnectionMetadata;
 import sqlline.OutputFormat;
+import sqlline.PromptHandler;
 import sqlline.ReflectiveCommandHandler;
 import sqlline.SqlLine;
 import sqlline.SqlLineOpts;
@@ -61,6 +65,7 @@ public class DrillSqlLineApplication extends Application {
   private static final String CONNECTION_URL_EXAMPLES_CONF = "drill.sqlline.connection_url_examples";
   private static final String COMMANDS_TO_EXCLUDE_CONF = "drill.sqlline.commands.exclude";
   private static final String OPTS_CONF = "drill.sqlline.opts";
+  private static final String PROMPT_WITH_SCHEMA = "drill.sqlline.prompt.with_schema";
 
   private final Config config;
 
@@ -81,25 +86,30 @@ public class DrillSqlLineApplication extends Application {
   }
 
   @Override
-  public String getInfoMessage() throws Exception {
+  public String getInfoMessage() {
     if (config.hasPath(INFO_MESSAGE_TEMPLATE_CONF)) {
       String quote = "";
       if (config.hasPath(QUOTES_CONF)) {
         List<String> quotes = config.getStringList(QUOTES_CONF);
         quote = quotes.get(new Random().nextInt(quotes.size()));
       }
-      return String.format(config.getString(INFO_MESSAGE_TEMPLATE_CONF), DrillVersionInfo.getVersion(), quote);
+      return String.format(config.getString(INFO_MESSAGE_TEMPLATE_CONF), getVersion(), quote);
     }
 
     return super.getInfoMessage();
   }
 
   @Override
-  public Collection<String> initDrivers() {
+  public String getVersion() {
+    return DrillVersionInfo.getVersion();
+  }
+
+  @Override
+  public List<String> allowedDrivers() {
     if (config.hasPath(DRIVERS_CONF)) {
       return config.getStringList(DRIVERS_CONF);
     }
-    return super.initDrivers();
+    return super.allowedDrivers();
   }
 
   @Override
@@ -162,6 +172,29 @@ public class DrillSqlLineApplication extends Application {
       );
     }
     return opts;
+  }
+
+  @Override
+  public PromptHandler getPromptHandler(SqlLine sqlLine) {
+    if (config.hasPath(PROMPT_WITH_SCHEMA) && config.getBoolean(PROMPT_WITH_SCHEMA)) {
+      return new PromptHandler(sqlLine) {
+        @Override
+        protected AttributedString getDefaultPrompt(int connectionIndex, String url, String defaultPrompt) {
+          AttributedStringBuilder builder = new AttributedStringBuilder();
+          builder.style(resolveStyle("f:y"));
+          builder.append("apache drill");
+
+          ConnectionMetadata meta = sqlLine.getConnectionMetadata();
+
+          String currentSchema = meta.getCurrentSchema();
+          if (currentSchema != null) {
+            builder.append(" (").append(currentSchema).append(")");
+          }
+          return builder.style(resolveStyle("default")).append("> ").toAttributedString();
+        }
+      };
+    }
+    return super.getPromptHandler(sqlLine);
   }
 
   private Config loadConfig(String configName) {

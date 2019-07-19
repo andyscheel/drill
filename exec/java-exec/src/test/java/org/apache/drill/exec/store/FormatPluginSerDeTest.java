@@ -35,7 +35,9 @@ public class FormatPluginSerDeTest extends PlanTestBase {
       testPhysicalPlanSubmission(
           String.format("select * from table(cp.`%s`(type=>'parquet'))", "parquet/alltypes_required.parquet"),
           String.format("select * from table(cp.`%s`(type=>'parquet', autoCorrectCorruptDates=>false))", "parquet/alltypes_required.parquet"),
-          String.format("select * from table(cp.`%s`(type=>'parquet', autoCorrectCorruptDates=>true))", "parquet/alltypes_required.parquet"));
+          String.format("select * from table(cp.`%s`(type=>'parquet', autoCorrectCorruptDates=>true))", "parquet/alltypes_required.parquet"),
+          String.format("select * from table(cp.`%s`(type=>'parquet', autoCorrectCorruptDates=>true, enableStringsSignedMinMax=>false))", "parquet/alltypes_required.parquet"),
+          String.format("select * from table(cp.`%s`(type=>'parquet', autoCorrectCorruptDates=>false, enableStringsSignedMinMax=>true))", "parquet/alltypes_required.parquet"));
     } finally {
       resetSessionOption(ExecConstants.SLICE_TARGET);
     }
@@ -91,9 +93,9 @@ public class FormatPluginSerDeTest extends PlanTestBase {
 
   @Test
   public void testHttpd() throws Exception {
-    String path = "store/httpd/dfs-bootstrap.httpd";
+    String path = "store/httpd/dfs-test-bootstrap-test.httpd";
     dirTestWatcher.copyResourceToRoot(Paths.get(path));
-    String logFormat = "%h %t \"%r\" %>s %b \"%{Referer}i\"";
+    String logFormat = "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-agent}i\"";
     String timeStampFormat = "dd/MMM/yyyy:HH:mm:ss ZZ";
     testPhysicalPlanSubmission(
         String.format("select * from dfs.`%s`", path),

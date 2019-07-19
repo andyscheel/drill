@@ -19,9 +19,7 @@ package org.apache.drill.exec.vector.accessor;
 
 import org.apache.drill.exec.record.MaterializedField;
 import org.apache.drill.exec.record.metadata.ColumnMetadata;
-import org.apache.drill.exec.record.metadata.ProjectionType;
 import org.apache.drill.exec.record.metadata.TupleMetadata;
-import org.apache.drill.exec.vector.accessor.ColumnWriter.TupleListenable;
 
 /**
  * Writer for a tuple. A tuple is composed of columns with a fixed order and
@@ -52,23 +50,7 @@ import org.apache.drill.exec.vector.accessor.ColumnWriter.TupleListenable;
  * @see {@link SingleMapWriter}, the class which this class replaces
  */
 
-public interface TupleWriter extends ColumnWriter, TupleListenable {
-
-  /**
-   * Listener (callback) to handle requests to add a new column to a tuple (row
-   * or map). Implemented and bound by the client code that creates or uses the
-   * tuple writer. If no listener is bound, then an attempt to add a column
-   * throws an exception.
-   */
-
-  interface TupleWriterListener {
-
-    ObjectWriter addColumn(TupleWriter tuple, ColumnMetadata column);
-
-    ObjectWriter addColumn(TupleWriter tuple, MaterializedField field);
-
-    ProjectionType projectionType(String columnName);
-  }
+public interface TupleWriter extends ColumnWriter {
 
   /**
    * Unchecked exception thrown when attempting to access a column writer by
@@ -85,20 +67,6 @@ public interface TupleWriter extends ColumnWriter, TupleListenable {
       super("Undefined column: " + colName);
     }
   }
-
-  /**
-   * Allows a client to "sniff" the projection set to determine if a
-   * field is projected. Some clients can omit steps if they know that
-   * a field is not needed. Others will simply create the column, allowing
-   * the implementation to create a dummy writer if the column is not
-   * projected.
-   *
-   * @param columnName name of an existing or new column
-   * @return whether the column is projected, and, if so, the implied
-   * type of the projected column
-   */
-
-  ProjectionType projectionType(String columnName);
 
   /**
    * Add a column to the tuple (row or map) that backs this writer. Support for

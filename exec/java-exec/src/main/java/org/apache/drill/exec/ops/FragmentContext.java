@@ -20,8 +20,7 @@ package org.apache.drill.exec.ops;
 import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
-
-import org.apache.drill.exec.work.filter.RuntimeFilterSink;
+import java.util.concurrent.TimeUnit;
 import org.apache.drill.shaded.guava.com.google.common.annotations.VisibleForTesting;
 import org.apache.calcite.schema.SchemaPlus;
 import org.apache.drill.common.config.DrillConfig;
@@ -31,13 +30,15 @@ import org.apache.drill.exec.expr.ClassGenerator;
 import org.apache.drill.exec.expr.CodeGenerator;
 import org.apache.drill.exec.expr.fn.FunctionLookupContext;
 import org.apache.drill.exec.memory.BufferAllocator;
+import org.apache.drill.exec.ops.QueryContext.SqlStatementType;
 import org.apache.drill.exec.physical.base.PhysicalOperator;
 import org.apache.drill.exec.proto.ExecProtos;
+import org.apache.drill.exec.proto.UserBitShared.QueryId;
 import org.apache.drill.exec.server.options.OptionManager;
 import org.apache.drill.exec.testing.ExecutionControls;
+import org.apache.drill.exec.work.filter.RuntimeFilterWritable;
 
 import io.netty.buffer.DrillBuf;
-import org.apache.drill.exec.work.filter.RuntimeFilterWritable;
 
 /**
  * Provides the resources required by a non-exchange operator to execute.
@@ -94,13 +95,14 @@ public interface FragmentContext extends UdfUtilities, AutoCloseable {
       throws ClassTransformationException, IOException;
 
   /**
-   * Generates code for a class given a {@link CodeGenerator}, and returns the
-   * specified number of instances of the generated class. (Note that the name
-   * is a misnomer, it would be better called
-   * <tt>getImplementationInstances</tt>.)
-   *
-   * @param cg the code generator
-   * @return list of instances of the generated class
+   * Returns the statement type (e.g. SELECT, CTAS, ANALYZE) from the query context.
+   * @return query statement type {@link SqlStatementType}, if known.
+   */
+  public SqlStatementType getSQLStatementType();
+
+  /**
+   * Get this node's identity.
+   * @return A DrillbitEndpoint object.
    */
   <T> List<T> getImplementationClass(final CodeGenerator<T> cg, final int instanceCount)
       throws ClassTransformationException, IOException;
@@ -140,6 +142,16 @@ public interface FragmentContext extends UdfUtilities, AutoCloseable {
 
   BufferAllocator getAllocator();
 
+  /**
+   * @return ID {@link java.util.UUID} of the current query
+   */
+  public QueryId getQueryId();
+
+  /**
+   * @return The string representation of the ID {@link java.util.UUID} of the current query
+   */
+  public String getQueryIdString();
+
   OperatorContext newOperatorContext(PhysicalOperator popConfig);
 
   OperatorContext newOperatorContext(PhysicalOperator popConfig, OperatorStats stats);
@@ -159,17 +171,22 @@ public interface FragmentContext extends UdfUtilities, AutoCloseable {
 
   @Override
   void close();
-
-  /**
-   * @return
-   */
-  RuntimeFilterSink getRuntimeFilterSink();
-
   /**
    * add a RuntimeFilter when the RuntimeFilter receiver belongs to the same MinorFragment
    * @param runtimeFilter
    */
   public void addRuntimeFilter(RuntimeFilterWritable runtimeFilter);
+
+  public RuntimeFilterWritable getRuntimeFilter(long rfIdentifier);
+
+  /**
+   * get the RuntimeFilter with a blocking wait, if the waiting option is enabled
+   * @param rfIdentifier
+   * @param maxWaitTime
+   * @param timeUnit
+   * @return the RFW or null
+   */
+  public RuntimeFilterWritable getRuntimeFilter(long rfIdentifier, long maxWaitTime, TimeUnit timeUnit);
 
   interface ExecutorState {
     /**

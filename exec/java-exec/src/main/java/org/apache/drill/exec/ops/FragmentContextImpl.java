@@ -17,11 +17,17 @@
  */
 package org.apache.drill.exec.ops;
 
+import io.netty.buffer.DrillBuf;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import org.apache.calcite.schema.SchemaPlus;
 import org.apache.drill.common.config.DrillConfig;
@@ -35,6 +41,7 @@ import org.apache.drill.exec.exception.OutOfMemoryException;
 import org.apache.drill.exec.expr.fn.FunctionImplementationRegistry;
 import org.apache.drill.exec.expr.holders.ValueHolder;
 import org.apache.drill.exec.memory.BufferAllocator;
+import org.apache.drill.exec.ops.QueryContext.SqlStatementType;
 import org.apache.drill.exec.physical.base.PhysicalOperator;
 import org.apache.drill.exec.physical.impl.OperatorCreatorRegistry;
 import org.apache.drill.exec.planner.PhysicalPlanReader;
@@ -43,6 +50,7 @@ import org.apache.drill.exec.proto.BitControl.PlanFragment;
 import org.apache.drill.exec.proto.CoordinationProtos.DrillbitEndpoint;
 import org.apache.drill.exec.proto.ExecProtos.FragmentHandle;
 import org.apache.drill.exec.proto.GeneralRPCProtos.Ack;
+import org.apache.drill.exec.proto.UserBitShared.QueryId;
 import org.apache.drill.exec.proto.helper.QueryIdHelper;
 import org.apache.drill.exec.rpc.RpcException;
 import org.apache.drill.exec.rpc.RpcOutcomeListener;
@@ -60,15 +68,11 @@ import org.apache.drill.exec.store.SchemaConfig;
 import org.apache.drill.exec.testing.ExecutionControls;
 import org.apache.drill.exec.util.ImpersonationUtil;
 import org.apache.drill.exec.work.batch.IncomingBuffers;
-
-import org.apache.drill.exec.work.filter.RuntimeFilterSink;
+import org.apache.drill.exec.work.filter.RuntimeFilterWritable;
 import org.apache.drill.shaded.guava.com.google.common.base.Function;
 import org.apache.drill.shaded.guava.com.google.common.base.Preconditions;
 import org.apache.drill.shaded.guava.com.google.common.collect.Lists;
 import org.apache.drill.shaded.guava.com.google.common.collect.Maps;
-
-import io.netty.buffer.DrillBuf;
-import org.apache.drill.exec.work.filter.RuntimeFilterWritable;
 
 /**
  * <p>
@@ -115,6 +119,10 @@ public class FragmentContextImpl extends BaseFragmentContext implements Executor
   private final BufferManager bufferManager;
   private ExecutorState executorState;
   private final ExecutionControls executionControls;
+  private boolean enableRuntimeFilter;
+  private boolean enableRFWaiting;
+  private Lock lock4RF;
+  private Condition condition4RF;
 
   private final SendingAccountor sendingAccountor = new SendingAccountor();
   private final Consumer<RpcException> exceptionConsumer = new Consumer<RpcException>() {
@@ -136,8 +144,8 @@ public class FragmentContextImpl extends BaseFragmentContext implements Executor
   private final AccountingUserConnection accountingUserConnection;
   /** Stores constants and their holders by type */
   private final Map<String, Map<MinorType, ValueHolder>> constantValueHolderCache;
-
-  private RuntimeFilterSink runtimeFilterSink;
+  private Map<Long, RuntimeFilterWritable> rfIdentifier2RFW = new ConcurrentHashMap<>();
+  private Map<Long, Boolean> rfIdentifier2fetched = new ConcurrentHashMap<>();
 
   /**
    * Create a FragmentContext instance for non-root fragment.
@@ -209,10 +217,11 @@ public class FragmentContextImpl extends BaseFragmentContext implements Executor
     stats = new FragmentStats(allocator, fragment.getAssignment());
     bufferManager = new BufferManagerImpl(this.allocator);
     constantValueHolderCache = Maps.newHashMap();
-    boolean enableRF = context.getOptionManager().getOption(ExecConstants.HASHJOIN_ENABLE_RUNTIME_FILTER);
-    if (enableRF) {
-      ExecutorService executorService = context.getExecutor();
-      this.runtimeFilterSink = new RuntimeFilterSink(this.allocator, executorService);
+    enableRuntimeFilter = this.getOptions().getOption(ExecConstants.HASHJOIN_ENABLE_RUNTIME_FILTER_KEY).bool_val;
+    enableRFWaiting = this.getOptions().getOption(ExecConstants.HASHJOIN_RUNTIME_FILTER_WAITING_ENABLE_KEY).bool_val && enableRuntimeFilter;
+    if (enableRFWaiting) {
+      lock4RF = new ReentrantLock();
+      condition4RF = lock4RF.newCondition();
     }
   }
 
@@ -362,12 +371,50 @@ public class FragmentContextImpl extends BaseFragmentContext implements Executor
 
   @Override
   public void addRuntimeFilter(RuntimeFilterWritable runtimeFilter) {
-    this.runtimeFilterSink.aggregate(runtimeFilter);
+    long rfIdentifier = runtimeFilter.getRuntimeFilterBDef().getRfIdentifier();
+    //if the RF was sent directly from the HJ nodes, we don't need to retain the buffer again
+    // as the RuntimeFilterReporter has already retained the buffer
+    rfIdentifier2fetched.put(rfIdentifier, false);
+    rfIdentifier2RFW.put(rfIdentifier, runtimeFilter);
+    if (enableRFWaiting) {
+      lock4RF.lock();
+      try {
+        condition4RF.signal();
+      } catch (Exception e) {
+        logger.info("fail to signal the waiting thread.", e);
+      } finally {
+        lock4RF.unlock();
+      }
+    }
   }
 
   @Override
-  public RuntimeFilterSink getRuntimeFilterSink() {
-    return runtimeFilterSink;
+  public RuntimeFilterWritable getRuntimeFilter(long rfIdentifier) {
+    RuntimeFilterWritable runtimeFilterWritable = rfIdentifier2RFW.get(rfIdentifier);
+    if (runtimeFilterWritable != null) {
+      rfIdentifier2fetched.put(rfIdentifier, true);
+    }
+    return runtimeFilterWritable;
+  }
+
+  @Override
+  public RuntimeFilterWritable getRuntimeFilter(long rfIdentifier, long maxWaitTime, TimeUnit timeUnit) {
+    if (rfIdentifier2RFW.get(rfIdentifier) != null) {
+      return getRuntimeFilter(rfIdentifier);
+    }
+    if (enableRFWaiting) {
+      lock4RF.lock();
+      try {
+        if (rfIdentifier2RFW.get(rfIdentifier) == null) {
+          condition4RF.await(maxWaitTime, timeUnit);
+        }
+      } catch (InterruptedException e) {
+        logger.info("Condition was interrupted", e);
+      } finally {
+        lock4RF.unlock();
+      }
+    }
+    return getRuntimeFilter(rfIdentifier);
   }
 
   /**
@@ -467,6 +514,12 @@ public class FragmentContextImpl extends BaseFragmentContext implements Executor
   }
 
   @Override
+  public QueryId getQueryId() { return fragment.getHandle().getQueryId();}
+
+  @Override
+  public String getQueryIdString() { return QueryIdHelper.getQueryId(getQueryId()); }
+
+  @Override
   public boolean isImpersonationEnabled() {
     // TODO(DRILL-2097): Until SimpleRootExec tests are removed, we need to consider impersonation disabled if there is
     // no config
@@ -484,12 +537,11 @@ public class FragmentContextImpl extends BaseFragmentContext implements Executor
     // Close the buffers before closing the operators; this is needed as buffer ownership
     // is attached to the receive operators.
     suppressingClose(buffers);
-
+    closeNotConsumedRFWs();
     // close operator context
     for (OperatorContextImpl opContext : contexts) {
       suppressingClose(opContext);
     }
-    suppressingClose(runtimeFilterSink);
     suppressingClose(bufferManager);
     suppressingClose(allocator);
   }
@@ -549,5 +601,23 @@ public class FragmentContextImpl extends BaseFragmentContext implements Executor
   @Override
   protected BufferManager getBufferManager() {
     return bufferManager;
+  }
+
+  private void closeNotConsumedRFWs() {
+    for (RuntimeFilterWritable runtimeFilterWritable : rfIdentifier2RFW.values()){
+      long rfIdentifier = runtimeFilterWritable.getRuntimeFilterBDef().getRfIdentifier();
+      boolean fetchedByOperator = rfIdentifier2fetched.get(rfIdentifier);
+      if (!fetchedByOperator) {
+        //if the RF hasn't been consumed by the operator, we have to released it one more time.
+        runtimeFilterWritable.close();
+      }
+    }
+  }
+
+  @Override
+  public SqlStatementType getSQLStatementType() {
+    Preconditions.checkNotNull(queryContext, "Statement type is only valid for root fragment."
+            + " Calling from non-root fragment");
+    return queryContext.getSQLStatementType();
   }
 }
